@@ -3,26 +3,18 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 
+// NOTE: Do NOT throw at module scope if env vars are missing.
+// NextAuth will warn at runtime; build must succeed.
+const secret = process.env.NEXTAUTH_SECRET;
+
 export const authOptions: NextAuthOptions = {
-  session: { strategy: "jwt" },
-
-  // Harden cookies for production
-  cookies: {
-    sessionToken: {
-      // Use "__Secure-" prefix only when served over HTTPS (production)
-      name:
-        process.env.NODE_ENV === "production"
-          ? "__Secure-next-auth.session-token"
-          : "next-auth.session-token",
-      options: {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        secure: process.env.NODE_ENV === "production",
-      },
-    },
+  secret,
+  session: {
+    strategy: "jwt",
   },
-
+  pages: {
+    signIn: "/login",
+  },
   providers: [
     CredentialsProvider({
       name: "Credentials",
@@ -31,8 +23,8 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        const email = credentials?.email?.toLowerCase().trim();
-        const password = credentials?.password;
+        const email = String(credentials?.email ?? "").trim().toLowerCase();
+        const password = String(credentials?.password ?? "");
 
         if (!email || !password) return null;
 
@@ -48,7 +40,7 @@ export const authOptions: NextAuthOptions = {
           },
         });
 
-        if (!user) return null;
+        if (!user?.passwordHash) return null;
 
         const ok = await bcrypt.compare(password, user.passwordHash);
         if (!ok) return null;
@@ -56,16 +48,16 @@ export const authOptions: NextAuthOptions = {
         return {
           id: user.id,
           email: user.email,
-          name: user.name,
-          role: user.role,
-          organizationId: user.organizationId,
+          name: user.name ?? undefined,
+          role: String(user.role),
+          organizationId: String(user.organizationId),
         } as any;
       },
     }),
   ],
-
   callbacks: {
     async jwt({ token, user }) {
+      // On sign-in, copy values into JWT token
       if (user) {
         token.id = (user as any).id;
         token.role = (user as any).role;
@@ -74,9 +66,10 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
-      (session as any).user.id = token.id;
-      (session as any).user.role = token.role;
-      (session as any).user.organizationId = token.organizationId;
+      // Expose required fields on session.user for requireSessionUser()
+      (session.user as any).id = token.id;
+      (session.user as any).role = token.role;
+      (session.user as any).organizationId = token.organizationId;
       return session;
     },
   },
