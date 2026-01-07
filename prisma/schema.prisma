@@ -1,0 +1,305 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./prisma/dev.db"
+}
+
+enum UserRole {
+  OWNER
+  TENANT
+}
+
+enum UnitStatus {
+  VACANT
+  OCCUPIED
+}
+
+enum MaintenanceStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETE
+  CANCELLED
+}
+
+enum InviteRole {
+  TENANT
+  OWNER
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+}
+
+enum SupportTicketCategory {
+  BUG
+  FEATURE
+  BILLING
+  SECURITY
+  OTHER
+}
+
+enum SupportTicketStatus {
+  OPEN
+  CLOSED
+}
+
+enum LeaseStatus {
+  ACTIVE
+  ENDED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+enum AttachmentKind {
+  IMAGE
+  VIDEO
+}
+
+model Organization {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users               User[]
+  properties          Property[]
+  units               Unit[]
+  maintenanceRequests MaintenanceRequest[]
+  supportTickets      SupportTicket[]
+  leases              Lease[]
+  invites             Invite[]
+  serviceAttachments  ServiceAttachment[]
+
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  role         UserRole
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  tenantLeases Lease[] @relation("TenantLeases")
+
+  tenantProfile       TenantProfile?
+  maintenanceRequests MaintenanceRequest[] @relation("TenantMaintenance")
+  supportTickets      SupportTicket[]
+  uploadedAttachments ServiceAttachment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model TenantProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  phone            String?
+  emergencyContact String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Property {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name       String
+  type       String
+  address    String
+  city       String
+  state      String
+  postalCode String
+  notes      String?
+
+  units Unit[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model Unit {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id])
+
+  label         String
+  category      String
+  status        UnitStatus @default(VACANT)
+  baseRentCents Int
+
+  maintenanceRequests MaintenanceRequest[] @relation("UnitMaintenance")
+
+  leases Lease[]
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([propertyId])
+}
+
+model MaintenanceRequest {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // required tenant
+  tenantId String
+  tenant   User   @relation("TenantMaintenance", fields: [tenantId], references: [id])
+
+  // optional unit (we can make required later)
+  unitId String?
+  unit   Unit?   @relation("UnitMaintenance", fields: [unitId], references: [id])
+
+  title       String
+  description String
+  priority    String // "LOW" | "MEDIUM" | "HIGH"
+  status      MaintenanceStatus @default(OPEN)
+  attachments ServiceAttachment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([tenantId])
+  @@index([unitId])
+}
+
+model SupportTicket {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  category SupportTicketCategory @default(OTHER)
+  subject  String
+  message  String
+  status   SupportTicketStatus   @default(OPEN)
+
+  // Lightweight diagnostics (safe for v1)
+  pageUrl   String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([status])
+}
+
+model AuditLog {
+  id             String      @id @default(cuid())
+  organizationId String
+  userId         String
+  entityType     String
+  entityId       String
+  action         AuditAction
+  metadata       Json?
+  createdAt      DateTime    @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([entityType])
+}
+
+model Lease {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  unitId String
+  unit   Unit   @relation(fields: [unitId], references: [id])
+
+  tenantId String
+  tenant   User   @relation("TenantLeases", fields: [tenantId], references: [id])
+
+  startDate DateTime
+  endDate   DateTime?
+  rentCents Int
+  status    LeaseStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([unitId])
+  @@index([tenantId])
+  @@index([status])
+}
+
+model Invite {
+  id             String   @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  email          String
+  name           String?
+  role           InviteRole @default(TENANT)
+  status         InviteStatus @default(PENDING)
+
+  token          String   @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([status])
+}
+
+model ServiceAttachment {
+  id             String   @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  requestId      String
+  request        MaintenanceRequest @relation(fields: [requestId], references: [id])
+
+  uploadedByUserId String
+  uploadedByUser   User @relation(fields: [uploadedByUserId], references: [id])
+
+  kind           AttachmentKind
+  mimeType       String
+  sizeBytes      Int
+  storagePath    String   // path inside Supabase bucket
+
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@index([requestId])
+  @@index([uploadedByUserId])
+}

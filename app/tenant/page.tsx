@@ -1,0 +1,668 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Button from "@/components/ui/button";
+import Input from "@/components/ui/input";
+import Textarea from "@/components/ui/textarea";
+
+type Unit = {
+  id: string;
+  label: string;
+  category: string;
+  propertyName: string;
+};
+
+type Lease = {
+  id: string;
+  status: "ACTIVE" | "ENDED";
+  startDate: string;
+  endDate: string | null;
+  rentCents: number;
+  unit: { id: string; label: string; category: string };
+};
+
+type Req = {
+  id: string;
+  title: string;
+  description: string;
+  priority: string;
+  status: "OPEN" | "IN_PROGRESS" | "COMPLETE" | "CANCELLED";
+  createdAt: string;
+  unitId: string | null;
+};
+
+type Attachment = {
+  id: string;
+  kind: "IMAGE" | "VIDEO";
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+  url: string | null;
+};
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleString();
+}
+
+function money(cents: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+    (cents || 0) / 100
+  );
+}
+
+function statusChip(status: Req["status"]) {
+  const base = "inline-flex items-center rounded-full border px-2 py-0.5 text-xs";
+  if (status === "IN_PROGRESS") return `${base} border-[#2A3566] bg-[#1A2346] text-zinc-100`;
+  if (status === "COMPLETE") return `${base} border-[#23382F] bg-[#101A14] text-zinc-200`;
+  if (status === "CANCELLED") return `${base} border-[#3A2A2A] bg-[#1A1010] text-zinc-200`;
+  return `${base} border-[#232838] bg-[#0B0E14] text-zinc-200`;
+}
+
+function priorityChip(priority: string) {
+  const p = (priority || "").toUpperCase();
+  const base = "inline-flex items-center rounded-full border px-2 py-0.5 text-xs";
+  if (p === "HIGH") return `${base} border-[#2A3566] bg-[#1A2346] text-zinc-100`;
+  if (p === "MEDIUM") return `${base} border-[#232838] bg-[#161C2F] text-zinc-200`;
+  return `${base} border-[#232838] bg-[#0B0E14] text-zinc-200`;
+}
+
+function leaseStatusChip(status: Lease["status"]) {
+  const base = "inline-flex items-center rounded-full border px-2 py-0.5 text-xs";
+  if (status === "ACTIVE") return `${base} border-[#2A3566] bg-[#1A2346] text-zinc-100`;
+  return `${base} border-[#232838] bg-[#0B0E14] text-zinc-200`;
+}
+
+export default function TenantPortal() {
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [leases, setLeases] = useState<Lease[]>([]);
+  const [requests, setRequests] = useState<Req[]>([]);
+  const [selected, setSelected] = useState<Req | null>(null);
+
+  const [title, setTitle] = useState("Gate code not working");
+  const [description, setDescription] = useState(
+    "My access code failed twice last night. Please verify and reset if needed."
+  );
+  const [priority, setPriority] = useState<"LOW" | "MEDIUM" | "HIGH">("HIGH");
+  const [unitId, setUnitId] = useState<string>("");
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+
+  // Attachments state (for selected request drawer)
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attLoading, setAttLoading] = useState(false);
+  const [attError, setAttError] = useState<string | null>(null);
+  const [attUploading, setAttUploading] = useState(false);
+
+  // Files selected on the Submit card (uploaded after request is created)
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingUploadMsg, setPendingUploadMsg] = useState<string | null>(null);
+
+  async function load(mode: "initial" | "refresh" = "initial") {
+    if (mode === "refresh") setRefreshing(true);
+    else setLoading(true);
+
+    setError(null);
+
+    try {
+      const [uRes, lRes, rRes] = await Promise.all([
+        fetch("/api/tenant/units"),
+        fetch("/api/tenant/leases"),
+        fetch("/api/tenant/requests"),
+      ]);
+
+      const uJson = await uRes.json();
+      const lJson = await lRes.json();
+      const rJson = await rRes.json();
+
+      if (!uRes.ok) throw new Error(uJson?.error ?? "Failed to load units");
+      if (!lRes.ok) throw new Error(lJson?.error ?? "Failed to load leases");
+      if (!rRes.ok) throw new Error(rJson?.error ?? "Failed to load requests");
+
+      const unitData: Unit[] = uJson.data ?? [];
+      const leaseData: Lease[] = lJson.data ?? [];
+      const requestData: Req[] = rJson.data ?? [];
+
+      setUnits(unitData);
+      setLeases(leaseData);
+      setRequests(requestData);
+
+      // Intelligent unit selection
+      if (unitData.length === 1) setUnitId(unitData[0].id);
+      else if (unitData.length > 1) {
+        const stillValid = unitData.some((u) => u.id === unitId);
+        if (!unitId || !stillValid) setUnitId(unitData[0].id);
+      } else {
+        setUnitId("");
+      }
+
+      setLastRefreshedAt(new Date().toLocaleString());
+    } catch (e: any) {
+      setError(e?.message ?? "Unknown error");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    load("initial");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When selecting a request, load attachments in drawer
+  useEffect(() => {
+    if (!selected) {
+      setAttachments([]);
+      setAttError(null);
+      return;
+    }
+    loadAttachments(selected.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
+
+  async function loadAttachments(requestId: string) {
+    setAttLoading(true);
+    setAttError(null);
+    try {
+      const res = await fetch(`/api/attachments/${requestId}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? "Failed to load attachments");
+      setAttachments(json.data ?? []);
+    } catch (e: any) {
+      setAttError(e?.message ?? "Failed to load attachments");
+      setAttachments([]);
+    } finally {
+      setAttLoading(false);
+    }
+  }
+
+  async function uploadFilesToRequest(requestId: string, files: File[]) {
+    if (!files || files.length === 0) return;
+
+    setPendingUploadMsg(`Uploading ${files.length} file(s)…`);
+
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append("file", file);
+
+      const res = await fetch(`/api/attachments/${requestId}`, {
+        method: "POST",
+        body: fd,
+      });
+
+      let json: any = {};
+      try {
+        json = await res.json();
+      } catch {}
+
+      if (!res.ok) {
+        throw new Error(json?.error ?? "Attachment upload failed");
+      }
+    }
+
+    setPendingUploadMsg(null);
+  }
+
+  async function uploadFiles(requestId: string, files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setAttUploading(true);
+    setAttError(null);
+
+    try {
+      await uploadFilesToRequest(requestId, Array.from(files));
+      await loadAttachments(requestId);
+    } catch (e: any) {
+      setAttError(e?.message ?? "Upload failed");
+    } finally {
+      setAttUploading(false);
+    }
+  }
+
+  const selectedUnitLabel = useMemo(() => {
+    if (!selected?.unitId) return "—";
+    const u = units.find((x) => x.id === selected.unitId);
+    return u ? `${u.propertyName} • ${u.label}` : "—";
+  }, [units, selected]);
+
+  const canSubmit = useMemo(() => {
+    return title.trim().length > 3 && description.trim().length > 10;
+  }, [title, description]);
+
+  const unitCount = units.length;
+  const singleUnit = unitCount === 1 ? units[0] : null;
+
+  const activeLeases = useMemo(() => leases.filter((l) => l.status === "ACTIVE"), [leases]);
+
+  async function submit() {
+    setSubmitting(true);
+    setError(null);
+    setSuccess(null);
+    setPendingUploadMsg(null);
+
+    try {
+      const res = await fetch("/api/tenant/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          description,
+          priority,
+          unitId: unitId || null,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? "Failed to submit request");
+
+      const createdId = json?.data?.id ?? json?.id;
+      if (!createdId) throw new Error("Request created, but ID was not returned.");
+
+      if (pendingFiles.length > 0) {
+        try {
+          await uploadFilesToRequest(createdId, pendingFiles);
+          setSuccess("Request submitted with attachments.");
+        } finally {
+          setPendingFiles([]);
+          setPendingUploadMsg(null);
+        }
+      } else {
+        setSuccess("Request submitted. You can track status updates below.");
+      }
+
+      setTitle("");
+      setDescription("");
+      setPriority("MEDIUM");
+
+      await load("refresh");
+    } catch (e: any) {
+      setError(e?.message ?? "Unknown error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Tenant Portal</h1>
+          <p className="mt-1 text-sm text-zinc-300">
+            View your lease details and submit service requests. For urgent safety issues, contact the owner directly.
+          </p>
+          {lastRefreshedAt && (
+            <div className="mt-2 text-xs text-zinc-500">Last refreshed: {lastRefreshedAt}</div>
+          )}
+        </div>
+
+        <Button
+          variant="secondary"
+          onClick={() => load("refresh")}
+          disabled={loading || refreshing}
+        >
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="rounded-xl border border-red-900/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="rounded-xl border border-[#2A3566] bg-[#1A2346] px-4 py-3 text-sm text-zinc-100">
+          {success}
+        </div>
+      )}
+
+      {/* My Leases */}
+      <section className="rounded-2xl border border-[#232838] bg-[#121726] p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500">My Lease(s)</div>
+          <div className="text-xs text-zinc-500">
+            {loading ? "Loading…" : `${activeLeases.length} active`}
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-xl border border-[#232838] bg-[#161C2F]">
+          <div className="grid grid-cols-12 bg-[#0B0E14] px-3 py-2 text-[11px] uppercase tracking-wider text-zinc-500">
+            <div className="col-span-4">Unit</div>
+            <div className="col-span-3">Status</div>
+            <div className="col-span-3">Start</div>
+            <div className="col-span-2 text-right">Rent</div>
+          </div>
+
+          {loading ? (
+            <div className="px-3 py-4 text-sm text-zinc-400">Loading…</div>
+          ) : leases.length === 0 ? (
+            <div className="px-3 py-4 text-sm text-zinc-300">
+              No lease records found. If you believe this is an error, contact the owner.
+            </div>
+          ) : (
+            <div className="divide-y divide-[#232838]">
+              {leases.map((l, idx) => (
+                <div
+                  key={l.id}
+                  className={[
+                    "grid grid-cols-12 items-center px-3 py-3 text-sm transition",
+                    idx % 2 === 0 ? "bg-transparent" : "bg-[#141A2E]",
+                    "hover:bg-[#1C2340]",
+                  ].join(" ")}
+                >
+                  <div className="col-span-4 text-zinc-100">
+                    <div className="font-medium">{l.unit.label}</div>
+                    <div className="text-xs text-zinc-400">{l.unit.category}</div>
+                  </div>
+                  <div className="col-span-3">
+                    <span className={leaseStatusChip(l.status)}>{l.status}</span>
+                  </div>
+                  <div className="col-span-3 text-zinc-300">
+                    {new Date(l.startDate).toLocaleDateString()}
+                  </div>
+                  <div className="col-span-2 text-right text-zinc-200">{money(l.rentCents)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Submit form */}
+      <section className="rounded-2xl border border-[#232838] bg-[#121726] p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500">
+            Submit a Service Request
+          </div>
+          <div className="text-xs text-zinc-500">Keep it specific and actionable.</div>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          {/* Intelligent unit selector */}
+          <div className="md:col-span-2">
+            <div className="text-xs text-zinc-500">Unit</div>
+
+            {unitCount === 0 ? (
+              <div className="mt-2 text-sm text-zinc-300">
+                No leased units found. Submit the request without selecting a unit and describe the location.
+              </div>
+            ) : unitCount === 1 && singleUnit ? (
+              <div className="mt-2 rounded-xl border border-[#232838] bg-[#161C2F] px-4 py-3">
+                <div className="text-sm text-zinc-100">
+                  {singleUnit.propertyName} • {singleUnit.label}
+                </div>
+                <div className="mt-1 text-xs text-zinc-400">{singleUnit.category}</div>
+              </div>
+            ) : (
+              <select
+                className="mt-1 w-full rounded-md border border-[#232838] bg-[#161C2F] px-3 py-2 text-zinc-100 outline-none focus:ring-2 focus:ring-[#5B6EE1]/30 disabled:opacity-60"
+                value={unitId}
+                onChange={(e) => setUnitId(e.target.value)}
+                disabled={loading || submitting || units.length === 0}
+              >
+                {units.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.propertyName} • {u.label} ({u.category})
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div>
+            <div className="text-xs text-zinc-500">Priority</div>
+            <select
+              className="mt-1 w-full rounded-md border border-[#232838] bg-[#161C2F] px-3 py-2 text-zinc-100 outline-none focus:ring-2 focus:ring-[#5B6EE1]/30 disabled:opacity-60"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as any)}
+              disabled={submitting}
+            >
+              <option value="LOW">LOW</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="HIGH">HIGH</option>
+            </select>
+          </div>
+
+          <div className="md:col-span-2">
+            <div className="text-xs text-zinc-500">Title</div>
+            <div className="mt-1">
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} disabled={submitting} />
+            </div>
+          </div>
+
+          <div className="md:col-span-2">
+            <div className="text-xs text-zinc-500">Description</div>
+            <div className="mt-1">
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={4}
+                disabled={submitting}
+              />
+            </div>
+          </div>
+
+          {/* Attachments on submit */}
+          <div className="md:col-span-2">
+            <div className="text-xs text-zinc-500">Photos / Video (optional)</div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <input
+                type="file"
+                accept="image/*,video/mp4,video/quicktime"
+                multiple
+                disabled={submitting}
+                onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []))}
+                className="text-xs text-zinc-300"
+              />
+
+              {pendingFiles.length > 0 && (
+                <Button variant="secondary" onClick={() => setPendingFiles([])} disabled={submitting}>
+                  Clear ({pendingFiles.length})
+                </Button>
+              )}
+            </div>
+
+            <div className="mt-2 text-xs text-zinc-500">
+              Add photos/video to help the owner resolve faster. Max 25MB per file.
+            </div>
+
+            {pendingUploadMsg && (
+              <div className="mt-2 text-sm text-zinc-300">{pendingUploadMsg}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          <Button variant="primary" onClick={submit} disabled={!canSubmit || submitting || loading}>
+            {submitting ? "Submitting…" : "Submit Request"}
+          </Button>
+        </div>
+      </section>
+
+      {/* Requests table */}
+      <section className="rounded-2xl border border-[#232838] bg-[#121726] p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500">My Requests</div>
+          <div className="text-xs text-zinc-500">{loading ? "Loading…" : `${requests.length} request(s)`}</div>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-xl border border-[#232838] bg-[#161C2F]">
+          <div className="grid grid-cols-12 bg-[#0B0E14] px-3 py-2 text-[11px] uppercase tracking-wider text-zinc-500">
+            <div className="col-span-5">Title</div>
+            <div className="col-span-2">Priority</div>
+            <div className="col-span-2">Status</div>
+            <div className="col-span-3">Created</div>
+          </div>
+
+          {loading ? (
+            <div className="px-3 py-4 text-sm text-zinc-400">Loading…</div>
+          ) : requests.length === 0 ? (
+            <div className="px-3 py-4 text-sm text-zinc-300">
+              No requests yet. Submit your first request above.
+            </div>
+          ) : (
+            <div className="divide-y divide-[#232838]">
+              {requests.map((r, idx) => (
+                <button
+                  key={r.id}
+                  className={[
+                    "w-full text-left grid grid-cols-12 items-center px-3 py-3 text-sm transition",
+                    idx % 2 === 0 ? "bg-transparent" : "bg-[#141A2E]",
+                    "hover:bg-[#1C2340]",
+                  ].join(" ")}
+                  onClick={() => setSelected(r)}
+                >
+                  <div className="col-span-5 text-zinc-100 truncate">{r.title}</div>
+                  <div className="col-span-2">
+                    <span className={priorityChip(r.priority)}>{r.priority}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className={statusChip(r.status)}>{r.status}</span>
+                  </div>
+                  <div className="col-span-3 text-zinc-300">{fmtDate(r.createdAt)}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Request drawer */}
+      {selected && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setSelected(null)} />
+          <div className="absolute right-0 top-0 h-full w-full max-w-md border-l border-[#232838] bg-[#0B0E14] p-6 overflow-y-auto">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-zinc-500">Request</div>
+                <div className="mt-1 text-xl font-semibold">{selected.title}</div>
+                <div className="mt-2 flex gap-2">
+                  <span className={priorityChip(selected.priority)}>{selected.priority}</span>
+                  <span className={statusChip(selected.status)}>{selected.status}</span>
+                </div>
+              </div>
+
+              <Button variant="secondary" onClick={() => setSelected(null)}>
+                Close
+              </Button>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <Card title="Created">
+                <div className="text-sm text-zinc-200">{fmtDate(selected.createdAt)}</div>
+              </Card>
+
+              <Card title="Unit">
+                <div className="text-sm text-zinc-200">{selectedUnitLabel}</div>
+              </Card>
+
+              <Card title="Description">
+                <div className="text-sm text-zinc-200 whitespace-pre-wrap">{selected.description}</div>
+              </Card>
+
+              <Card
+                title="Attachments"
+                right={
+                  <Button
+                    variant="secondary"
+                    onClick={() => loadAttachments(selected.id)}
+                    disabled={attLoading}
+                  >
+                    {attLoading ? "Loading…" : "Refresh"}
+                  </Button>
+                }
+              >
+                {attError && (
+                  <div className="rounded-xl border border-red-900/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+                    {attError}
+                  </div>
+                )}
+
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <input
+                    type="file"
+                    accept="image/*,video/mp4,video/quicktime"
+                    multiple
+                    disabled={attUploading}
+                    onChange={(e) => uploadFiles(selected.id, e.target.files)}
+                    className="text-xs text-zinc-300"
+                  />
+                </div>
+
+                {attUploading && <div className="mt-3 text-sm text-zinc-300">Uploading…</div>}
+
+                {attLoading ? (
+                  <div className="mt-3 text-sm text-zinc-400">Loading…</div>
+                ) : attachments.length === 0 ? (
+                  <div className="mt-3 text-sm text-zinc-300">No attachments yet.</div>
+                ) : (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {attachments.map((a) => (
+                      <div key={a.id} className="rounded-xl border border-[#232838] bg-[#161C2F] p-2">
+                        <div className="text-[10px] uppercase tracking-wider text-zinc-500">{a.kind}</div>
+                        <div className="mt-2">
+                          {a.url ? (
+                            a.kind === "IMAGE" ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={a.url} alt="Attachment" className="h-28 w-full rounded-md object-cover" />
+                            ) : (
+                              <video controls className="h-28 w-full rounded-md object-cover" src={a.url} />
+                            )
+                          ) : (
+                            <div className="text-xs text-zinc-400">URL unavailable (refresh)</div>
+                          )}
+                        </div>
+                        <div className="mt-2 text-xs text-zinc-500">
+                          {Math.round((a.sizeBytes || 0) / 1024)} KB • {new Date(a.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Footer */}
+      <footer id="emergency" className="mt-10 border-t border-[#232838] pt-4 text-center text-xs text-zinc-500">
+        <div>
+          <span className="font-medium text-zinc-400">Emergency?</span>{" "}
+          This portal is not monitored for urgent safety issues. Please contact the property owner or emergency services
+          directly.
+        </div>
+
+        <div className="mt-2 text-zinc-600">
+          Powered by <span className="font-medium text-zinc-400">Senthel Systems</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function Card({
+  title,
+  right,
+  children,
+}: {
+  title: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#232838] bg-[#121726] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[11px] uppercase tracking-wider text-zinc-500">{title}</div>
+        {right}
+      </div>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
