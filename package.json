@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && cross-env NEXT_DISABLE_TURBOPACK=1 next build",
+    "build": "npx prisma generate && cross-env NEXT_DISABLE_TURBOPACK=1 next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
+    "postinstall": "npx prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",
@@ -15,6 +15,7 @@
     "bcryptjs": "^3.0.3",
     "next": "16.1.1",
     "next-auth": "^4.24.13",
+    "prisma": "^6.2.1",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
@@ -26,7 +27,6 @@
     "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
-    "prisma": "^6.2.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
