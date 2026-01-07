@@ -4,6 +4,8 @@ import { requireSessionUser } from "@/lib/org-context";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import crypto from "crypto";
 
+export const dynamic = "force-dynamic";
+
 type Ctx = { params: Promise<{ requestId: string }> };
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25MB
@@ -21,12 +23,13 @@ export async function GET(_req: Request, { params }: Ctx) {
     const user = await requireSessionUser();
     const { requestId } = await params;
 
-    // enforce access
+    const isTenant = String(user.role).toUpperCase() === "TENANT";
+
+    // Enforce access to the request
     const reqRow = await prisma.maintenanceRequest.findFirst({
-      where:
-        user.role === "TENANT"
-          ? { id: requestId, tenantId: user.id, organizationId: user.organizationId }
-          : { id: requestId, organizationId: user.organizationId },
+      where: isTenant
+        ? { id: requestId, tenantId: user.id, organizationId: user.organizationId }
+        : { id: requestId, organizationId: user.organizationId },
       select: { id: true, organizationId: true },
     });
 
@@ -46,7 +49,7 @@ export async function GET(_req: Request, { params }: Ctx) {
       },
     });
 
-    // Return SAME-ORIGIN proxy URLs (no CORS issues)
+    // Return SAME-ORIGIN proxy URL for reliable rendering (no CORS issues)
     const data = rows.map((r) => ({
       ...r,
       url: `/api/attachments/media/${r.id}`,
@@ -62,7 +65,6 @@ export async function GET(_req: Request, { params }: Ctx) {
   }
 }
 
-// Tenant upload only (v1)
 export async function POST(req: Request, { params }: Ctx) {
   try {
     const user = await requireSessionUser();
@@ -72,6 +74,7 @@ export async function POST(req: Request, { params }: Ctx) {
 
     const { requestId } = await params;
 
+    // Tenant can upload only to their own request
     const reqRow = await prisma.maintenanceRequest.findFirst({
       where: { id: requestId, tenantId: user.id, organizationId: user.organizationId },
       select: { id: true, organizationId: true },
@@ -141,7 +144,6 @@ export async function POST(req: Request, { params }: Ctx) {
       },
     });
 
-    // IMPORTANT: return JSON so client res.json() never fails
     return NextResponse.json({ data: created });
   } catch (e: any) {
     return NextResponse.json(
