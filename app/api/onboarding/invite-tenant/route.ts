@@ -5,6 +5,8 @@ import { rateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import crypto from "crypto";
 
+export const dynamic = "force-dynamic";
+
 function isEmail(x: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
 }
@@ -23,7 +25,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const email = String(body?.email ?? "").trim().toLowerCase();
     const name = body?.name ? String(body.name).trim() : null;
 
@@ -31,8 +33,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
     }
 
-    // v1 constraint:
-    // If user exists in another org, we cannot attach them yet (v2 OrgMembership).
+    // v1 constraint: if user exists in another org, we cannot attach them yet (v2 OrgMembership).
     const existing = await prisma.user.findUnique({
       where: { email },
       select: { id: true, organizationId: true, role: true },
@@ -86,6 +87,9 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     const status = e?.code === "FORBIDDEN" ? 403 : 500;
-    return NextResponse.json({ error: e?.message ?? "Failed to invite tenant" }, { status });
+    return NextResponse.json(
+      { error: e?.message ?? "Failed to invite tenant" },
+      { status }
+    );
   }
 }

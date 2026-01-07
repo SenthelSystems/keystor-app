@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireOwnerUser } from "@/lib/org-context";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const user = await requireOwnerUser();
@@ -11,7 +13,6 @@ export async function GET() {
     const soonMs = 2 * 24 * 60 * 60 * 1000; // 2 days
     const soonDate = new Date(Date.now() + soonMs);
 
-    // Only TENANT invites for this org
     const pendingInvites = await prisma.invite.findMany({
       where: {
         organizationId: orgId,
@@ -35,6 +36,7 @@ export async function GET() {
       (i) => new Date(i.expiresAt).getTime() <= soonDate.getTime()
     ).length;
 
+    // IMPORTANT: do not require NEXTAUTH_URL at build time; provide fallback
     const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
     const topExpiring = pendingInvites.slice(0, 3).map((i) => ({

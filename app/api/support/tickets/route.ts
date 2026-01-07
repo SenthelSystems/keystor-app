@@ -4,6 +4,8 @@ import { requireOwnerUser } from "@/lib/org-context";
 import { logAudit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: Request) {
   try {
     const user = await requireOwnerUser();
@@ -18,7 +20,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     const category = String(body?.category ?? "OTHER").toUpperCase();
     const subject = String(body?.subject ?? "").trim();
@@ -33,7 +35,7 @@ export async function POST(req: Request) {
     if (!subject) return NextResponse.json({ error: "Subject is required" }, { status: 400 });
     if (!message) return NextResponse.json({ error: "Message is required" }, { status: 400 });
 
-    // Payload limits (Step 4)
+    // Payload limits
     if (subject.length > 120)
       return NextResponse.json({ error: "Subject too long (max 120)" }, { status: 400 });
     if (message.length > 5000)

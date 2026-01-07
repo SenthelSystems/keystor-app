@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireOwnerUser } from "@/lib/org-context";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const user = await requireOwnerUser();
@@ -44,7 +46,10 @@ export async function GET() {
     const vacant = units.filter((u) => u.status === "VACANT").length;
     const occupied = units.filter((u) => u.status === "OCCUPIED").length;
 
-    const baseRentMonthlyCents = units.reduce((sum, u) => sum + (u.baseRentCents || 0), 0);
+    const baseRentMonthlyCents = units.reduce(
+      (sum, u) => sum + (u.baseRentCents || 0),
+      0
+    );
 
     const openReq = requests.filter((r) => r.status === "OPEN");
     const highReq = requests.filter(
@@ -64,15 +69,18 @@ export async function GET() {
     const tenantRequestCount = new Map<string, number>();
     openReq.forEach((r) => {
       if (!r.tenantId) return;
-      tenantRequestCount.set(r.tenantId, (tenantRequestCount.get(r.tenantId) ?? 0) + 1);
+      tenantRequestCount.set(
+        r.tenantId,
+        (tenantRequestCount.get(r.tenantId) ?? 0) + 1
+      );
     });
-    const repeatTenantFlag = Array.from(tenantRequestCount.values()).some((c) => c >= 3);
+    const repeatTenantFlag = Array.from(tenantRequestCount.values()).some(
+      (c) => c >= 3
+    );
 
     // ---- Smart selection logic for Attention top list ----
-    // Goal: keep high/aging prioritized BUT always include newest OPEN items.
-    // We'll build a scored list and then ensure newest OPEN items are represented.
-
-    const isHigh = (r: any) => r.priority?.toUpperCase() === "HIGH" && r.status !== "COMPLETE";
+    const isHigh = (r: any) =>
+      r.priority?.toUpperCase() === "HIGH" && r.status !== "COMPLETE";
     const isAging = (r: any) =>
       r.status !== "COMPLETE" &&
       r.status !== "CANCELLED" &&
@@ -83,22 +91,17 @@ export async function GET() {
       return arr.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
     };
 
-    // base ranked list
     const ranked = uniqueById([...requests]).sort((a, b) => {
       const aScore = (isHigh(a) ? 2 : 0) + (isAging(a) ? 1 : 0);
       const bScore = (isHigh(b) ? 2 : 0) + (isAging(b) ? 1 : 0);
       if (bScore !== aScore) return bScore - aScore;
-      // tiebreaker: newest first
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
-    // take initial top 6
     let top = ranked.slice(0, 6);
 
-    // ensure newest OPEN item is included (if it exists)
-    const newestOpen = openReq[0]; // requests are already ordered desc by createdAt
+    const newestOpen = openReq[0];
     if (newestOpen && !top.some((t) => t.id === newestOpen.id)) {
-      // replace the last item with newest OPEN
       top = [...top.slice(0, 5), newestOpen];
       top = uniqueById(top);
     }
@@ -128,6 +131,10 @@ export async function GET() {
     });
   } catch (e: any) {
     const status = e?.code === "FORBIDDEN" ? 403 : 401;
-    return NextResponse.json({ error: e?.message ?? "Failed to load overview" }, { status });
+    return NextResponse.json(
+      { error: e?.message ?? "Failed to load overview" },
+      { status }
+    );
   }
 }
+

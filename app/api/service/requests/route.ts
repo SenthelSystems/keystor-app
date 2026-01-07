@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireOwnerUser } from "@/lib/org-context";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const user = await requireOwnerUser();
@@ -20,7 +22,6 @@ export async function GET() {
         tenantId: true,
         unitId: true,
 
-        // ✅ Tenant identity context (Smart Updates Session 2)
         tenant: {
           select: {
             name: true,
@@ -28,7 +29,6 @@ export async function GET() {
           },
         },
 
-        // ✅ Unit context
         unit: {
           select: {
             label: true,

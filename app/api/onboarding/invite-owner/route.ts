@@ -3,26 +3,29 @@ import { prisma } from "@/lib/db";
 import crypto from "crypto";
 import { logAudit } from "@/lib/audit";
 
+export const dynamic = "force-dynamic";
+
 function isEmail(x: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
 }
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     const secret = String(body?.secret ?? "");
     const email = String(body?.email ?? "").trim().toLowerCase();
     const name = body?.name ? String(body.name).trim() : null;
 
-    if (!process.env.ADMIN_INVITE_SECRET) {
+    const adminSecret = process.env.ADMIN_INVITE_SECRET;
+    if (!adminSecret) {
       return NextResponse.json(
         { error: "ADMIN_INVITE_SECRET is not configured" },
         { status: 500 }
       );
     }
 
-    if (!secret || secret !== process.env.ADMIN_INVITE_SECRET) {
+    if (!secret || secret !== adminSecret) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -43,7 +46,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // Invalidate any existing pending OWNER invites for this email (clean behavior)
+    // Invalidate any existing pending OWNER invites for this email
     await prisma.invite.updateMany({
       where: {
         email,
@@ -60,7 +63,7 @@ export async function POST(req: Request) {
 
     const invite = await prisma.invite.create({
       data: {
-        organizationId: null,   // ✅ owner org is created at acceptance time
+        organizationId: null, // owner org created at acceptance time
         email,
         name,
         role: "OWNER",

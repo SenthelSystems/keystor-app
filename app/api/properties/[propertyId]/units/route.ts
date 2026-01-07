@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { requireOwnerUser } from "@/lib/org-context";
 import { logAudit } from "@/lib/audit";
 
+export const dynamic = "force-dynamic";
+
 type Ctx = { params: Promise<{ propertyId: string }> };
 
 export async function GET(_req: Request, { params }: Ctx) {
@@ -16,20 +18,32 @@ export async function GET(_req: Request, { params }: Ctx) {
       select: { id: true },
     });
 
-    if (!property) return NextResponse.json({ error: "Property not found" }, { status: 404 });
+    if (!property) {
+      return NextResponse.json({ error: "Property not found" }, { status: 404 });
+    }
 
     const data = await prisma.unit.findMany({
       where: { organizationId: orgId, propertyId },
       orderBy: { createdAt: "desc" },
       select: {
-        id: true, label: true, category: true, status: true, baseRentCents: true, propertyId: true,
+        id: true,
+        label: true,
+        category: true,
+        status: true,
+        baseRentCents: true,
+        propertyId: true,
+        notes: true,
+        createdAt: true,
       },
     });
 
     return NextResponse.json({ data });
   } catch (e: any) {
     const status = e?.code === "FORBIDDEN" ? 403 : 401;
-    return NextResponse.json({ error: e?.message ?? "Failed to load units" }, { status });
+    return NextResponse.json(
+      { error: e?.message ?? "Failed to load units" },
+      { status }
+    );
   }
 }
 
@@ -44,14 +58,17 @@ export async function POST(req: Request, { params }: Ctx) {
       select: { id: true },
     });
 
-    if (!property) return NextResponse.json({ error: "Property not found" }, { status: 404 });
+    if (!property) {
+      return NextResponse.json({ error: "Property not found" }, { status: 404 });
+    }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     const label = String(body?.label ?? "").trim();
     const category = String(body?.category ?? "").trim();
     const status = String(body?.status ?? "VACANT").trim();
     const baseRentDollars = Number(body?.baseRentDollars ?? 0);
+    const notes = body?.notes ? String(body.notes) : null;
 
     if (!label) return NextResponse.json({ error: "Label is required" }, { status: 400 });
     if (!category) return NextResponse.json({ error: "Category is required" }, { status: 400 });
@@ -63,8 +80,25 @@ export async function POST(req: Request, { params }: Ctx) {
     const baseRentCents = Math.round(baseRentDollars * 100);
 
     const created = await prisma.unit.create({
-      data: { organizationId: orgId, propertyId, label, category, status: status as any, baseRentCents },
-      select: { id: true, label: true, category: true, status: true, baseRentCents: true, propertyId: true },
+      data: {
+        organizationId: orgId,
+        propertyId,
+        label,
+        category,
+        status: status as any,
+        baseRentCents,
+        notes,
+      },
+      select: {
+        id: true,
+        label: true,
+        category: true,
+        status: true,
+        baseRentCents: true,
+        propertyId: true,
+        notes: true,
+        createdAt: true,
+      },
     });
 
     await logAudit({
@@ -79,6 +113,10 @@ export async function POST(req: Request, { params }: Ctx) {
     return NextResponse.json({ data: created });
   } catch (e: any) {
     const status = e?.code === "FORBIDDEN" ? 403 : 500;
-    return NextResponse.json({ error: e?.message ?? "Failed to create unit" }, { status });
+    return NextResponse.json(
+      { error: e?.message ?? "Failed to create unit" },
+      { status }
+    );
   }
 }
+

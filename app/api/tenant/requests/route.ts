@@ -4,6 +4,8 @@ import { requireSessionUser } from "@/lib/org-context";
 import { logAudit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const user = await requireSessionUser();
@@ -50,7 +52,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     const title = String(body?.title ?? "").trim();
     const description = String(body?.description ?? "").trim();
@@ -58,7 +60,8 @@ export async function POST(req: Request) {
     const unitId = body?.unitId ? String(body.unitId) : null;
 
     if (!title) return NextResponse.json({ error: "Title is required" }, { status: 400 });
-    if (!description) return NextResponse.json({ error: "Description is required" }, { status: 400 });
+    if (!description)
+      return NextResponse.json({ error: "Description is required" }, { status: 400 });
     if (!["LOW", "MEDIUM", "HIGH"].includes(priority))
       return NextResponse.json({ error: "Invalid priority" }, { status: 400 });
 

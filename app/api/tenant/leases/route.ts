@@ -2,9 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireSessionUser } from "@/lib/org-context";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const user = await requireSessionUser();
+
     if (user.role !== "TENANT") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
