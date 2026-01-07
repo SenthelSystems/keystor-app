@@ -2,7 +2,7 @@
 
 import React from "react";
 
-type Variant = "primary" | "secondary" | "danger";
+type Variant = "primary" | "secondary" | "danger" | "ghost";
 
 type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant;
@@ -21,6 +21,7 @@ export default function Button({
     primary: "border-[#2A3566] bg-[#1A2346] text-zinc-100 hover:bg-[#1C2340]",
     secondary: "border-[#232838] bg-[#161C2F] text-zinc-200 hover:bg-[#1C2340]",
     danger: "border-red-900/40 bg-red-950/30 text-red-200 hover:bg-red-950/40",
+    ghost: "border-transparent bg-transparent text-zinc-200 hover:bg-[#1C2340]",
   };
 
   return (
