@@ -69,17 +69,20 @@ export async function POST(req: Request, { params }: Ctx) {
       role: true,
       status: true,
       expiresAt: true,
-      organizationId: true,
+      organizationId: true, // NOTE: nullable because OWNER invites start without org
       acceptedAt: true,
     },
   });
 
   if (!invite) return NextResponse.json({ error: "Invite not found" }, { status: 404 });
-  if (invite.status === "ACCEPTED" || invite.acceptedAt)
+  if (invite.status === "ACCEPTED" || invite.acceptedAt) {
     return NextResponse.json({ error: "Invite already accepted" }, { status: 400 });
+  }
 
   if (new Date(invite.expiresAt).getTime() < Date.now()) {
-    await prisma.invite.update({ where: { token }, data: { status: "EXPIRED" } }).catch(() => {});
+    await prisma.invite
+      .update({ where: { token }, data: { status: "EXPIRED" } })
+      .catch(() => {});
     return NextResponse.json({ error: "Invite expired" }, { status: 400 });
   }
 
@@ -102,9 +105,13 @@ export async function POST(req: Request, { params }: Ctx) {
       where: { email: invite.email },
       select: { id: true },
     });
+
     if (existingUser) {
       return NextResponse.json(
-        { error: "This email already has a SentryCor account. Owner reuse across orgs is supported in v2." },
+        {
+          error:
+            "This email already has a SentryCor account. Owner reuse across orgs is supported in v2.",
+        },
         { status: 400 }
       );
     }
@@ -144,17 +151,30 @@ export async function POST(req: Request, { params }: Ctx) {
         data: {
           status: "ACCEPTED",
           acceptedAt: new Date(),
-          organizationId: org.id, // bind invite to the created org for audit purposes
+          organizationId: org.id, // bind invite to created org
         },
       });
 
       return org;
     });
 
-    return NextResponse.json({ ok: true, email: invite.email, role: "OWNER", org: created.name });
+    return NextResponse.json({
+      ok: true,
+      email: invite.email,
+      role: "OWNER",
+      org: created.name,
+    });
   }
 
-  // TENANT acceptance (existing behavior)
+  // TENANT acceptance
+  // Tenant invites MUST have an organizationId
+  if (!invite.organizationId) {
+    return NextResponse.json(
+      { error: "Invite is missing organization context." },
+      { status: 400 }
+    );
+  }
+
   const existing = await prisma.user.findUnique({
     where: { email: invite.email },
     select: { id: true, organizationId: true },
@@ -163,7 +183,10 @@ export async function POST(req: Request, { params }: Ctx) {
   // v1 tenant rule: cannot reuse email across orgs yet
   if (existing && existing.organizationId !== invite.organizationId) {
     return NextResponse.json(
-      { error: "This email belongs to a tenant under another owner. Cross-owner tenants are supported in v2." },
+      {
+        error:
+          "This email belongs to a tenant under another owner. Cross-owner tenants are supported in v2.",
+      },
       { status: 400 }
     );
   }
@@ -172,17 +195,21 @@ export async function POST(req: Request, { params }: Ctx) {
     await prisma.user.create({
       data: {
         email: invite.email,
-        name: invite.name,
+        name: invite.name ?? undefined,
         passwordHash,
         role: "TENANT",
-        organizationId: invite.organizationId,
+        organizationId: invite.organizationId, // ✅ guaranteed string
         tenantProfile: { create: {} },
       },
     });
   } else {
     await prisma.user.update({
       where: { email: invite.email },
-      data: { passwordHash, role: "TENANT", organizationId: invite.organizationId },
+      data: {
+        passwordHash,
+        role: "TENANT",
+        organizationId: invite.organizationId, // ✅ guaranteed string
+      },
     });
   }
 
