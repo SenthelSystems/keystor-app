@@ -5,16 +5,15 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 type Ctx = { params: Promise<{ requestId: string }> };
 
-const MAX_BYTES = 25 * 1024 * 1024; // 25MB
-const ALLOWED_IMAGE = ["image/jpeg", "image/png", "image/webp"];
-const ALLOWED_VIDEO = ["video/mp4", "video/quicktime"];
-
 function kindFromMime(mime: string) {
-  if (ALLOWED_IMAGE.includes(mime)) return "IMAGE";
-  if (ALLOWED_VIDEO.includes(mime)) return "VIDEO";
+  const allowedImage = ["image/jpeg", "image/png", "image/webp"];
+  const allowedVideo = ["video/mp4", "video/quicktime"];
+  if (allowedImage.includes(mime)) return "IMAGE";
+  if (allowedVideo.includes(mime)) return "VIDEO";
   return null;
 }
 
@@ -25,7 +24,6 @@ export async function GET(_req: Request, { params }: Ctx) {
 
     const isTenant = String(user.role).toUpperCase() === "TENANT";
 
-    // Enforce access to the request
     const reqRow = await prisma.maintenanceRequest.findFirst({
       where: isTenant
         ? { id: requestId, tenantId: user.id, organizationId: user.organizationId }
@@ -49,7 +47,7 @@ export async function GET(_req: Request, { params }: Ctx) {
       },
     });
 
-    // Return SAME-ORIGIN proxy URL for reliable rendering (no CORS issues)
+    // Same-origin proxy URL (no CORS issues)
     const data = rows.map((r) => ({
       ...r,
       url: `/api/attachments/media/${r.id}`,
@@ -74,7 +72,6 @@ export async function POST(req: Request, { params }: Ctx) {
 
     const { requestId } = await params;
 
-    // Tenant can upload only to their own request
     const reqRow = await prisma.maintenanceRequest.findFirst({
       where: { id: requestId, tenantId: user.id, organizationId: user.organizationId },
       select: { id: true, organizationId: true },
@@ -93,6 +90,11 @@ export async function POST(req: Request, { params }: Ctx) {
     // @ts-ignore
     const f: File = file;
 
+    const MAX_BYTES = 25 * 1024 * 1024; // 25MB
+    if (f.size > MAX_BYTES) {
+      return NextResponse.json({ error: "File too large (max 25MB)" }, { status: 400 });
+    }
+
     const mime = f.type || "";
     const kind = kindFromMime(mime);
     if (!kind) {
@@ -100,10 +102,6 @@ export async function POST(req: Request, { params }: Ctx) {
         { error: "Unsupported file type. Use JPG/PNG/WEBP or MP4/MOV." },
         { status: 400 }
       );
-    }
-
-    if (f.size > MAX_BYTES) {
-      return NextResponse.json({ error: "File too large (max 25MB)" }, { status: 400 });
     }
 
     const bucket = process.env.SUPABASE_ATTACHMENTS_BUCKET || "service-attachments";
