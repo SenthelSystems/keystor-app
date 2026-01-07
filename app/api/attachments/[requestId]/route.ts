@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireSessionUser } from "@/lib/org-context";
-import { supabaseAdmin } from "@/lib/supabase-admin";
-import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -47,10 +45,9 @@ export async function GET(_req: Request, { params }: Ctx) {
       },
     });
 
-    // Same-origin proxy URL (no CORS issues)
     const data = rows.map((r) => ({
       ...r,
-      url: `/api/attachments/media/${r.id}`,
+      url: `/api/attachments/media/${r.id}`, // same-origin proxy
     }));
 
     return NextResponse.json({ data });
@@ -103,6 +100,12 @@ export async function POST(req: Request, { params }: Ctx) {
         { status: 400 }
       );
     }
+
+    // ✅ Lazy-import Supabase + crypto ONLY at runtime (avoids build collector issues)
+    const [{ supabaseAdmin }, crypto] = await Promise.all([
+      import("@/lib/supabase-admin"),
+      import("crypto"),
+    ]);
 
     const bucket = process.env.SUPABASE_ATTACHMENTS_BUCKET || "service-attachments";
     const supa = supabaseAdmin();
