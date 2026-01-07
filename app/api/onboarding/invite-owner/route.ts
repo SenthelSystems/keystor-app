@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import crypto from "crypto";
 import { logAudit } from "@/lib/audit";
+import { requireOwnerUser } from "@/lib/org-context";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function isEmail(x: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
@@ -11,23 +13,24 @@ function isEmail(x: string) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => ({}));
+    const user = await requireOwnerUser();
 
-    const secret = String(body?.secret ?? "");
-    const email = String(body?.email ?? "").trim().toLowerCase();
-    const name = body?.name ? String(body.name).trim() : null;
-
-    const adminSecret = process.env.ADMIN_INVITE_SECRET;
-    if (!adminSecret) {
+    const superAdmin = (process.env.SUPER_ADMIN_EMAIL ?? "").trim().toLowerCase();
+    if (!superAdmin) {
       return NextResponse.json(
-        { error: "ADMIN_INVITE_SECRET is not configured" },
+        { error: "SUPER_ADMIN_EMAIL is not configured" },
         { status: 500 }
       );
     }
 
-    if (!secret || secret !== adminSecret) {
+    if (String(user.email).toLowerCase() !== superAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+
+    const body = await req.json().catch(() => ({}));
+
+    const email = String(body?.email ?? "").trim().toLowerCase();
+    const name = body?.name ? String(body.name).trim() : null;
 
     if (!email || !isEmail(email)) {
       return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
@@ -48,14 +51,8 @@ export async function POST(req: Request) {
 
     // Invalidate any existing pending OWNER invites for this email
     await prisma.invite.updateMany({
-      where: {
-        email,
-        role: "OWNER",
-        status: "PENDING",
-      },
-      data: {
-        status: "EXPIRED",
-      },
+      where: { email, role: "OWNER", status: "PENDING" },
+      data: { status: "EXPIRED" },
     });
 
     const token = crypto.randomBytes(24).toString("hex");
@@ -74,10 +71,9 @@ export async function POST(req: Request) {
       select: { id: true, token: true, expiresAt: true },
     });
 
-    // Audit under SYSTEM user; org unknown until acceptance
     await logAudit({
       organizationId: "SYSTEM",
-      userId: "SYSTEM",
+      userId: user.id,
       entityType: "Invite",
       entityId: invite.id,
       action: "CREATE",
@@ -88,16 +84,13 @@ export async function POST(req: Request) {
     const link = `${baseUrl}/accept-invite?token=${invite.token}`;
 
     return NextResponse.json({
-      data: {
-        link,
-        expiresAt: invite.expiresAt,
-        email,
-      },
+      data: { link, expiresAt: invite.expiresAt, email },
     });
   } catch (e: any) {
+    const status = e?.code === "FORBIDDEN" ? 403 : 500;
     return NextResponse.json(
       { error: e?.message ?? "Failed to create owner invite" },
-      { status: 500 }
+      { status }
     );
   }
 }
