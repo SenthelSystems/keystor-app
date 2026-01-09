@@ -1,61 +1,57 @@
-import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
-export default function proxy(_req: NextRequest) {
-  const res = NextResponse.next();
-
-  // Always-safe headers (dev + prod)
-  res.headers.set("X-Frame-Options", "DENY");
-  res.headers.set("X-Content-Type-Options", "nosniff");
-  res.headers.set("Referrer-Policy", "same-origin");
-  res.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
-  res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
-
-  const isProd = process.env.NODE_ENV === "production";
-
-  // IMPORTANT:
-  // Next.js uses inline scripts for hydration. A strict CSP without nonces/hashes
-  // will break client-side JS (buttons "do nothing").
-  //
-  // v1 approach:
-  // - In dev: allow inline scripts so the app works.
-  // - In prod: keep CSP stricter (still dev-friendly until we add nonces).
-  if (!isProd) {
-    // Dev CSP: allow inline + eval (needed for Next dev tooling/hydration)
-    res.headers.set(
-      "Content-Security-Policy",
-      [
-        "default-src 'self'",
-        "base-uri 'self'",
-        "frame-ancestors 'none'",
-        "img-src 'self' data:",
-        "font-src 'self' data:",
-        "style-src 'self' 'unsafe-inline'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-        "connect-src 'self' ws: http: https:",
-      ].join("; ")
-    );
-  } else {
-    // Prod CSP (still conservative; we can tighten further with nonces later)
-    res.headers.set(
-      "Content-Security-Policy",
-      [
-        "default-src 'self'",
-        "base-uri 'self'",
-        "frame-ancestors 'none'",
-        "img-src 'self' data:",
-        "font-src 'self' data:",
-        "style-src 'self' 'unsafe-inline'",
-        "script-src 'self'",
-        "connect-src 'self' https:",
-      ].join("; ")
-    );
-  }
-
-  return res;
+// NOTE: this is intentionally permissive for v1 to avoid breaking Next.js runtime.
+// v2 hardening: replace unsafe-inline/unsafe-eval with nonce-based CSP.
+function buildCsp() {
+  const csp = [
+    "default-src 'self'",
+    // Next.js needs inline scripts in some cases (especially auth + hydration)
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    // Tailwind / inline styles and component libs often require this
+    "style-src 'self' 'unsafe-inline'",
+    // images and icons
+    "img-src 'self' data: blob: https:",
+    // media uploads/previews
+    "media-src 'self' blob: https:",
+    // Supabase + NextAuth + Vercel + general API access
+    "connect-src 'self' https: wss:",
+    // iframes (keep tight)
+    "frame-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ];
+  return csp.join("; ");
 }
 
 export const config = {
-  matcher: "/:path*",
+  matcher: [
+    /*
+      Apply to all routes except Next.js internals/assets.
+      Adjust if you already have a matcher you rely on.
+    */
+    "/((?!_next/static|_next/image|favicon.ico).*)",
+  ],
 };
+
+export default function middleware(req: NextRequest) {
+  const res = NextResponse.next();
+
+  // Core security headers
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("X-Frame-Options", "DENY");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.headers.set(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=()"
+  );
+
+  // CSP (v1 compatible)
+  res.headers.set("Content-Security-Policy", buildCsp());
+
+  // (Optional) HSTS only if you are confident you will always serve HTTPS on this domain.
+  // res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+
+  return res;
+}
