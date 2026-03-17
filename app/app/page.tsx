@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Button from "@/components/ui/button";
 import Input from "@/components/ui/input";
@@ -59,6 +59,8 @@ type InviteHealth = {
     link: string;
   }>;
 };
+
+type PlanKey = "starter" | "growth" | "pro";
 
 function chip(text: string) {
   return (
@@ -169,6 +171,9 @@ export default function AppHome() {
   const [lastInvitedEmail, setLastInvitedEmail] = useState<string | null>(null);
   const [lastInvitedName, setLastInvitedName] = useState<string | null>(null);
 
+  const [checkoutStarting, setCheckoutStarting] = useState(false);
+  const checkoutStartedRef = useRef(false);
+
   async function loadAll() {
     setLoading(true);
     setError(null);
@@ -198,7 +203,11 @@ export default function AppHome() {
       setOnboarding(sJson.data);
       setInviteHealth(hJson.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong while loading the dashboard.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while loading the dashboard."
+      );
     } finally {
       setLoading(false);
     }
@@ -206,6 +215,63 @@ export default function AppHome() {
 
   useEffect(() => {
     loadAll();
+  }, []);
+
+  useEffect(() => {
+    async function maybeStartCheckout() {
+      if (checkoutStartedRef.current) return;
+      if (typeof window === "undefined") return;
+
+      const params = new URLSearchParams(window.location.search);
+      const shouldStart = params.get("startCheckout") === "true";
+      const plan = params.get("plan") as PlanKey | null;
+      const founding = params.get("founding") === "true";
+
+      if (!shouldStart || !plan) return;
+
+      checkoutStartedRef.current = true;
+      setCheckoutStarting(true);
+      setError(null);
+
+      try {
+        const res = await fetch("/api/billing/checkout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            plan,
+            founding,
+          }),
+        });
+
+        const json = await res.json();
+
+        if (!res.ok) {
+          throw new Error(json?.error ?? "Unable to start billing checkout.");
+        }
+
+        if (!json?.url) {
+          throw new Error("Stripe checkout URL was not returned.");
+        }
+
+        const cleanUrl = `${window.location.origin}/app`;
+        window.history.replaceState({}, "", cleanUrl);
+        window.location.href = json.url;
+      } catch (err) {
+        const cleanUrl = `${window.location.origin}/app`;
+        window.history.replaceState({}, "", cleanUrl);
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Account created, but we could not start checkout."
+        );
+        setCheckoutStarting(false);
+      }
+    }
+
+    maybeStartCheckout();
   }, []);
 
   const onboardingComplete = useMemo(() => {
@@ -331,10 +397,16 @@ export default function AppHome() {
           </p>
         </div>
 
-        <Button variant="secondary" onClick={loadAll} disabled={loading}>
+        <Button variant="secondary" onClick={loadAll} disabled={loading || checkoutStarting}>
           {loading ? "Refreshing…" : "Refresh"}
         </Button>
       </div>
+
+      {checkoutStarting ? (
+        <div className="rounded-xl border border-[#2A3566] bg-[#1A2346] px-4 py-3 text-sm text-zinc-100">
+          Account created. Starting secure billing checkout…
+        </div>
+      ) : null}
 
       {error ? (
         <div className="rounded-xl border border-red-900/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">

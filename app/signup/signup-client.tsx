@@ -150,31 +150,16 @@ export default function SignupClient() {
       });
 
       if (!login || login.error) {
-        throw new Error("Account created, but automatic sign-in failed. Please sign in manually.");
+        throw new Error(
+          "Account created, but automatic sign-in failed. Please sign in manually."
+        );
       }
 
-      const checkoutRes = await fetch("/api/billing/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          plan,
-          founding,
-        }),
-      });
+      const nextUrl = `/app?startCheckout=true&plan=${encodeURIComponent(
+        plan
+      )}&founding=${founding ? "true" : "false"}`;
 
-      const checkoutJson = await checkoutRes.json();
-
-      if (!checkoutRes.ok) {
-        throw new Error(checkoutJson?.error ?? "Unable to start checkout.");
-      }
-
-      if (!checkoutJson?.url) {
-        throw new Error("Stripe checkout URL was not returned.");
-      }
-
-      window.location.href = checkoutJson.url;
+      router.push(nextUrl);
     } catch (err: any) {
       setError(err?.message ?? "Unable to start trial.");
       setLoading(false);
@@ -216,7 +201,7 @@ export default function SignupClient() {
               <p className="mt-5 max-w-xl text-base leading-7 text-zinc-300">
                 You’re signing up for the{" "}
                 <span className="font-medium text-zinc-100">{nicePlanName(plan)}</span> plan.
-                After creating your account, you’ll continue to secure checkout through Stripe.
+                After your account is created, we’ll take you straight into setup and billing.
               </p>
 
               <div className="mt-8 flex flex-wrap gap-2 text-xs">
@@ -251,7 +236,7 @@ export default function SignupClient() {
                 Create your KeyStor account
               </div>
               <p className="mt-3 text-sm leading-6 text-zinc-400">
-                Once your account is created, you’ll continue to billing and begin your free trial.
+                Once your account is created, we’ll sign you in and continue to billing automatically.
               </p>
 
               <form onSubmit={onSubmit} className="mt-8 space-y-4">
