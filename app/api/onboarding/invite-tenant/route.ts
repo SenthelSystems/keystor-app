@@ -16,7 +16,6 @@ export async function POST(req: Request) {
     const user = await requireOwnerUser();
     const orgId = user.organizationId;
 
-    // rate limit: prevent abuse
     const rl = rateLimit(`owner:${user.id}:invite-tenant`, 10, 60_000);
     if (!rl.ok) {
       return NextResponse.json(
@@ -30,10 +29,12 @@ export async function POST(req: Request) {
     const name = body?.name ? String(body.name).trim() : null;
 
     if (!email || !isEmail(email)) {
-      return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Valid email is required" },
+        { status: 400 }
+      );
     }
 
-    // v1 constraint: if user exists in another org, we cannot attach them yet (v2 OrgMembership).
     const existing = await prisma.user.findUnique({
       where: { email },
       select: { id: true, organizationId: true, role: true },
@@ -49,46 +50,116 @@ export async function POST(req: Request) {
       );
     }
 
-    // Create a token + invite record (expires in 7 days)
+    const now = new Date();
     const token = crypto.randomBytes(24).toString("hex");
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    const invite = await prisma.invite.create({
-      data: {
-        organizationId: orgId,
-        email,
-        name,
-        role: "TENANT",
-        status: "PENDING",
-        token,
-        expiresAt,
-      },
-      select: { id: true, token: true, expiresAt: true },
+    const result = await prisma.$transaction(async (tx) => {
+      const priorActiveInvites = await tx.invite.findMany({
+        where: {
+          organizationId: orgId,
+          email,
+          role: "TENANT",
+          status: "PENDING",
+          expiresAt: {
+            gt: now,
+          },
+        },
+        select: {
+          id: true,
+          token: true,
+          expiresAt: true,
+        },
+      });
+
+      if (priorActiveInvites.length > 0) {
+        await tx.invite.updateMany({
+          where: {
+            id: {
+              in: priorActiveInvites.map((invite) => invite.id),
+            },
+          },
+          data: {
+            status: "INVALIDATED",
+          },
+        });
+      }
+
+      const invite = await tx.invite.create({
+        data: {
+          organizationId: orgId,
+          email,
+          name,
+          role: "TENANT",
+          status: "PENDING",
+          token,
+          expiresAt,
+        },
+        select: {
+          id: true,
+          token: true,
+          expiresAt: true,
+        },
+      });
+
+      return {
+        invite,
+        priorActiveInvites,
+      };
     });
 
     await logAudit({
       organizationId: orgId,
       userId: user.id,
       entityType: "Invite",
-      entityId: invite.id,
+      entityId: result.invite.id,
       action: "CREATE",
-      metadata: { email, role: "TENANT" },
+      metadata: {
+        email,
+        role: "TENANT",
+        replacedInviteIds: result.priorActiveInvites.map((invite) => invite.id),
+      },
     });
 
-    // Build invite link (works in dev + prod if NEXTAUTH_URL is set)
+    if (result.priorActiveInvites.length > 0) {
+      for (const priorInvite of result.priorActiveInvites) {
+        await logAudit({
+          organizationId: orgId,
+          userId: user.id,
+          entityType: "Invite",
+          entityId: priorInvite.id,
+          action: "UPDATE",
+          metadata: {
+            email,
+            role: "TENANT",
+            updateType: "INVALIDATED",
+            replacedByToken: result.invite.token,
+          },
+        });
+      }
+    }
+
     const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-    const link = `${baseUrl}/accept-invite?token=${invite.token}`;
+    const link = `${baseUrl}/accept-invite?token=${result.invite.token}`;
 
     return NextResponse.json({
       data: {
         link,
-        expiresAt: invite.expiresAt,
+        expiresAt: result.invite.expiresAt,
       },
     });
-  } catch (e: any) {
-    const status = e?.code === "FORBIDDEN" ? 403 : 500;
+  } catch (e: unknown) {
+    const error =
+      e instanceof Error ? e : new Error("Failed to invite tenant");
+
+    const status =
+      typeof (e as { code?: string })?.code === "string" &&
+      (e as { code?: string }).code === "FORBIDDEN"
+        ? 403
+        : 500;
+
     return NextResponse.json(
-      { error: e?.message ?? "Failed to invite tenant" },
+      { error: error.message },
       { status }
     );
   }

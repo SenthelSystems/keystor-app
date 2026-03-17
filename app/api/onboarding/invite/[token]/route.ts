@@ -44,6 +44,13 @@ export async function GET(_req: Request, { params }: Ctx) {
       );
     }
 
+    if (invite.status === "INVALIDATED") {
+      return NextResponse.json(
+        { error: "This invite has been replaced by a newer link." },
+        { status: 400 }
+      );
+    }
+
     if (new Date(invite.expiresAt).getTime() < Date.now()) {
       await prisma.invite
         .update({ where: { token }, data: { status: "EXPIRED" } })
@@ -52,11 +59,9 @@ export async function GET(_req: Request, { params }: Ctx) {
     }
 
     return NextResponse.json({ data: invite });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Failed to load invite" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    const error = e instanceof Error ? e : new Error("Failed to load invite");
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
@@ -83,7 +88,7 @@ export async function POST(req: Request, { params }: Ctx) {
         role: true,
         status: true,
         expiresAt: true,
-        organizationId: true, // nullable because OWNER invites start without org
+        organizationId: true,
         acceptedAt: true,
       },
     });
@@ -99,6 +104,13 @@ export async function POST(req: Request, { params }: Ctx) {
       );
     }
 
+    if (invite.status === "INVALIDATED") {
+      return NextResponse.json(
+        { error: "This invite has been replaced by a newer link." },
+        { status: 400 }
+      );
+    }
+
     if (new Date(invite.expiresAt).getTime() < Date.now()) {
       await prisma.invite
         .update({ where: { token }, data: { status: "EXPIRED" } })
@@ -108,7 +120,6 @@ export async function POST(req: Request, { params }: Ctx) {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // OWNER acceptance: create new organization + owner user
     if (invite.role === "OWNER") {
       const ownerName = String(body?.ownerName ?? "").trim();
       const organizationName = String(body?.organizationName ?? "").trim();
@@ -119,6 +130,7 @@ export async function POST(req: Request, { params }: Ctx) {
           { status: 400 }
         );
       }
+
       if (!organizationName) {
         return NextResponse.json(
           { error: "Organization name is required" },
@@ -126,7 +138,6 @@ export async function POST(req: Request, { params }: Ctx) {
         );
       }
 
-      // v1 rule: owner email must not already exist
       const existingUser = await prisma.user.findUnique({
         where: { email: invite.email },
         select: { id: true },
@@ -142,7 +153,6 @@ export async function POST(req: Request, { params }: Ctx) {
         );
       }
 
-      // create org with unique slug
       let baseSlug = slugify(organizationName);
       if (!baseSlug) baseSlug = "org";
       let slug = baseSlug;
@@ -177,7 +187,7 @@ export async function POST(req: Request, { params }: Ctx) {
           data: {
             status: "ACCEPTED",
             acceptedAt: new Date(),
-            organizationId: org.id, // bind invite to created org
+            organizationId: org.id,
           },
         });
 
@@ -192,7 +202,6 @@ export async function POST(req: Request, { params }: Ctx) {
       });
     }
 
-    // TENANT acceptance — tenant invites MUST have an orgId
     if (!invite.organizationId) {
       return NextResponse.json(
         { error: "Invite is missing organization context." },
@@ -200,54 +209,76 @@ export async function POST(req: Request, { params }: Ctx) {
       );
     }
 
-    const existing = await prisma.user.findUnique({
-      where: { email: invite.email },
-      select: { id: true, organizationId: true },
-    });
+    const organizationId = invite.organizationId;
 
-    // v1 tenant rule: cannot reuse email across orgs yet
-    if (existing && existing.organizationId !== invite.organizationId) {
-      return NextResponse.json(
-        {
-          error:
-            "This email belongs to a tenant under another owner. Cross-owner tenants are supported in v2.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!existing) {
-      await prisma.user.create({
-        data: {
-          email: invite.email,
-          name: invite.name ?? undefined,
-          passwordHash,
-          role: "TENANT",
-          organizationId: invite.organizationId, // guaranteed string
-          tenantProfile: { create: {} },
-        },
-      });
-    } else {
-      await prisma.user.update({
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.user.findUnique({
         where: { email: invite.email },
+        select: { id: true, organizationId: true },
+      });
+
+      if (existing && existing.organizationId !== organizationId) {
+        throw new Error(
+          "This email belongs to a tenant under another owner. Cross-owner tenants are supported in v2."
+        );
+      }
+
+      if (!existing) {
+        await tx.user.create({
+          data: {
+            email: invite.email,
+            name: invite.name ?? undefined,
+            passwordHash,
+            role: "TENANT",
+            organizationId,
+            tenantProfile: { create: {} },
+          },
+        });
+      } else {
+        await tx.user.update({
+          where: { email: invite.email },
+          data: {
+            passwordHash,
+            role: "TENANT",
+            organizationId,
+          },
+        });
+      }
+
+      await tx.invite.update({
+        where: { token },
         data: {
-          passwordHash,
-          role: "TENANT",
-          organizationId: invite.organizationId, // guaranteed string
+          status: "ACCEPTED",
+          acceptedAt: new Date(),
         },
       });
-    }
 
-    await prisma.invite.update({
-      where: { token },
-      data: { status: "ACCEPTED", acceptedAt: new Date() },
+      await tx.invite.updateMany({
+        where: {
+          organizationId,
+          email: invite.email,
+          role: "TENANT",
+          status: "PENDING",
+          token: { not: token },
+        },
+        data: {
+          status: "INVALIDATED",
+        },
+      });
     });
 
-    return NextResponse.json({ ok: true, email: invite.email, role: "TENANT" });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message ?? "Failed to accept invite" },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      ok: true,
+      email: invite.email,
+      role: "TENANT",
+    });
+  } catch (e: unknown) {
+    const message =
+      e instanceof Error ? e.message : "Failed to accept invite";
+
+    const status =
+      message.includes("Cross-owner tenants are supported in v2.") ? 400 : 500;
+
+    return NextResponse.json({ error: message }, { status });
   }
 }

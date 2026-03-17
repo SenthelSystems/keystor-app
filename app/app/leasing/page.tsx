@@ -27,6 +27,8 @@ type TenantOption = {
   name: string | null;
 };
 
+const TENANT_CREATE_ENDPOINT = "/api/tenants";
+
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
     (cents || 0) / 100
@@ -47,6 +49,8 @@ export default function LeasingPage() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const [openCreate, setOpenCreate] = useState(false);
+  const [openAddTenant, setOpenAddTenant] = useState(false);
+
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [tenants, setTenants] = useState<TenantOption[]>([]);
 
@@ -56,6 +60,11 @@ export default function LeasingPage() {
   const [rentDollars, setRentDollars] = useState<string>("");
 
   const [saving, setSaving] = useState(false);
+  const [savingTenant, setSavingTenant] = useState(false);
+
+  const [tenantName, setTenantName] = useState("");
+  const [tenantEmail, setTenantEmail] = useState("");
+  const [tenantModalError, setTenantModalError] = useState<string | null>(null);
 
   async function loadLeases() {
     setLoading(true);
@@ -168,6 +177,50 @@ export default function LeasingPage() {
     }
   }
 
+  function openTenantModal() {
+    setTenantName("");
+    setTenantEmail("");
+    setTenantModalError(null);
+    setOpenAddTenant(true);
+  }
+
+  async function createTenant() {
+    setSavingTenant(true);
+    setTenantModalError(null);
+    setError(null);
+
+    try {
+      const name = tenantName.trim();
+      const email = tenantEmail.trim().toLowerCase();
+
+      if (!name) throw new Error("Tenant name is required.");
+      if (!email) throw new Error("Tenant email is required.");
+
+      const res = await fetch(TENANT_CREATE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? "Failed to create tenant.");
+
+      const createdTenant: TenantOption | undefined = json?.data;
+      if (!createdTenant?.id) {
+        throw new Error("Tenant created, but response did not include a tenant id.");
+      }
+
+      await loadCreateOptions();
+      setTenantId(createdTenant.id);
+      setOpenAddTenant(false);
+      setSuccess("Tenant added and selected for lease.");
+    } catch (e: any) {
+      setTenantModalError(e?.message ?? "Failed to create tenant.");
+    } finally {
+      setSavingTenant(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4">
@@ -181,6 +234,9 @@ export default function LeasingPage() {
         <div className="flex gap-2">
           <Button variant="secondary" onClick={loadLeases} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
+          </Button>
+          <Button variant="secondary" onClick={openTenantModal}>
+            + Add Tenant
           </Button>
           <Button variant="primary" onClick={() => setOpenCreate(true)}>
             + Create Lease
@@ -200,7 +256,6 @@ export default function LeasingPage() {
         </div>
       )}
 
-      {/* Active leases */}
       <section className="rounded-2xl border border-[#232838] bg-[#121726] p-4">
         <div className="flex items-center justify-between">
           <div className="text-[11px] uppercase tracking-wider text-zinc-500">
@@ -264,7 +319,6 @@ export default function LeasingPage() {
         </div>
       </section>
 
-      {/* Ended leases */}
       <section className="rounded-2xl border border-[#232838] bg-[#121726] p-4">
         <div className="flex items-center justify-between">
           <div className="text-[11px] uppercase tracking-wider text-zinc-500">
@@ -324,7 +378,6 @@ export default function LeasingPage() {
         </div>
       </section>
 
-      {/* Create lease modal */}
       {openCreate && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/60" onClick={() => !saving && setOpenCreate(false)} />
@@ -362,7 +415,17 @@ export default function LeasingPage() {
                 </div>
 
                 <div>
-                  <div className="text-xs text-zinc-500">Tenant</div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs text-zinc-500">Tenant</div>
+                    <button
+                      type="button"
+                      className="text-xs text-[#9FB0FF] hover:underline"
+                      onClick={openTenantModal}
+                      disabled={saving}
+                    >
+                      + Add Tenant
+                    </button>
+                  </div>
                   <select
                     className="mt-1 w-full rounded-md border border-[#232838] bg-[#161C2F] px-3 py-2 text-zinc-100 outline-none focus:ring-2 focus:ring-[#5B6EE1]/30 disabled:opacity-60"
                     value={tenantId}
@@ -395,6 +458,79 @@ export default function LeasingPage() {
                 </Button>
                 <Button variant="primary" onClick={createLease} disabled={saving}>
                   {saving ? "Creating…" : "Create Lease"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {openAddTenant && (
+        <div className="fixed inset-0 z-[60]">
+          <div
+            className="absolute inset-0 bg-black/70"
+            onClick={() => !savingTenant && setOpenAddTenant(false)}
+          />
+
+          <div className="absolute inset-x-0 top-12 mx-auto w-[92vw] max-w-xl">
+            <div className="rounded-2xl border border-[#232838] bg-[#0B0E14] p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-xs uppercase tracking-wider text-zinc-500">Add Tenant</div>
+                  <div className="mt-1 text-xl font-semibold text-zinc-100">Create Tenant Record</div>
+                  <div className="mt-1 text-sm text-zinc-300">
+                    Add the tenant once, then select them in the lease flow.
+                  </div>
+                </div>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => setOpenAddTenant(false)}
+                  disabled={savingTenant}
+                >
+                  Close
+                </Button>
+              </div>
+
+              {tenantModalError && (
+                <div className="mt-4 rounded-xl border border-red-900/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+                  {tenantModalError}
+                </div>
+              )}
+
+              <div className="mt-6 grid gap-4">
+                <div>
+                  <div className="text-xs text-zinc-500">Tenant Name</div>
+                  <Input
+                    value={tenantName}
+                    onChange={(e) => setTenantName(e.target.value)}
+                    disabled={savingTenant}
+                    placeholder="John Smith"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs text-zinc-500">Tenant Email</div>
+                  <Input
+                    type="email"
+                    value={tenantEmail}
+                    onChange={(e) => setTenantEmail(e.target.value)}
+                    disabled={savingTenant}
+                    placeholder="john@example.com"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => setOpenAddTenant(false)}
+                  disabled={savingTenant}
+                >
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={createTenant} disabled={savingTenant}>
+                  {savingTenant ? "Saving…" : "Save Tenant"}
                 </Button>
               </div>
             </div>

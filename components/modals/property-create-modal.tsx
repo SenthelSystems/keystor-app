@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Button from "@/components/ui/button";
 import Input from "@/components/ui/input";
 import Textarea from "@/components/ui/textarea";
+
+const DEFAULT_TYPE = "RESIDENTIAL";
 
 export default function PropertyCreateModal({
   open,
@@ -14,16 +16,30 @@ export default function PropertyCreateModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [name, setName] = useState("New Property");
-  const [type, setType] = useState("SFR_PORTFOLIO");
-  const [address, setAddress] = useState("123 KeyStor Way");
-  const [city, setCity] = useState("Chiefland");
-  const [state, setState] = useState("FL");
-  const [postalCode, setPostalCode] = useState("32626");
+  const [name, setName] = useState("");
+  const [type, setType] = useState(DEFAULT_TYPE);
+  const [address, setAddress] = useState("");
+  const [city, setCity] = useState("");
+  const [state, setState] = useState("");
+  const [postalCode, setPostalCode] = useState("");
   const [notes, setNotes] = useState("");
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    setName("");
+    setType(DEFAULT_TYPE);
+    setAddress("");
+    setCity("");
+    setState("");
+    setPostalCode("");
+    setNotes("");
+    setError(null);
+    setSaving(false);
+  }, [open]);
 
   if (!open) return null;
 
@@ -32,17 +48,31 @@ export default function PropertyCreateModal({
     setError(null);
 
     try {
+      const trimmedName = name.trim();
+      const trimmedType = type.trim() || DEFAULT_TYPE;
+      const trimmedAddress = address.trim();
+      const trimmedCity = city.trim();
+      const trimmedState = state.trim().toUpperCase().slice(0, 2);
+      const trimmedPostalCode = postalCode.trim();
+      const trimmedNotes = notes.trim();
+
+      if (!trimmedName) throw new Error("Property name is required.");
+      if (!trimmedAddress) throw new Error("Address is required.");
+      if (!trimmedCity) throw new Error("City is required.");
+      if (!trimmedState) throw new Error("State is required.");
+      if (!trimmedPostalCode) throw new Error("Postal code is required.");
+
       const res = await fetch("/api/properties", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name,
-          type,
-          address,
-          city,
-          state,
-          postalCode,
-          notes: notes || null,
+          name: trimmedName,
+          type: trimmedType,
+          address: trimmedAddress,
+          city: trimmedCity,
+          state: trimmedState,
+          postalCode: trimmedPostalCode,
+          notes: trimmedNotes || null,
         }),
       });
 
@@ -89,27 +119,62 @@ export default function PropertyCreateModal({
 
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <Field label="Name">
-              <Input value={name} onChange={(e) => setName(e.target.value)} disabled={saving} />
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Oak Street Duplex"
+                disabled={saving}
+                autoFocus
+              />
             </Field>
 
             <Field label="Type">
-              <Input value={type} onChange={(e) => setType(e.target.value)} disabled={saving} />
+              <Input
+                value={type}
+                onChange={(e) => setType(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
+                placeholder="RESIDENTIAL"
+                disabled={saving}
+              />
             </Field>
 
             <Field label="Address">
-              <Input value={address} onChange={(e) => setAddress(e.target.value)} disabled={saving} />
+              <Input
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="123 Main Street"
+                disabled={saving}
+              />
             </Field>
 
             <Field label="City">
-              <Input value={city} onChange={(e) => setCity(e.target.value)} disabled={saving} />
+              <Input
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                placeholder="Tampa"
+                disabled={saving}
+              />
             </Field>
 
             <Field label="State">
-              <Input value={state} onChange={(e) => setState(e.target.value)} disabled={saving} />
+              <Input
+                value={state}
+                onChange={(e) =>
+                  setState(e.target.value.replace(/[^a-zA-Z]/g, "").toUpperCase().slice(0, 2))
+                }
+                placeholder="FL"
+                maxLength={2}
+                disabled={saving}
+              />
             </Field>
 
             <Field label="Postal Code">
-              <Input value={postalCode} onChange={(e) => setPostalCode(e.target.value)} disabled={saving} />
+              <Input
+                value={postalCode}
+                onChange={(e) => setPostalCode(e.target.value)}
+                placeholder="33602"
+                disabled={saving}
+              />
             </Field>
 
             <div className="md:col-span-2">
@@ -118,6 +183,7 @@ export default function PropertyCreateModal({
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   rows={3}
+                  placeholder="Anything helpful to remember about this property."
                   disabled={saving}
                 />
               </Field>

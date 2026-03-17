@@ -2,21 +2,23 @@
 
 import Link from "next/link";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import Button from "@/components/ui/button";
 import Input from "@/components/ui/input";
 
-function KeyStorMark({ size = 42 }: { size?: number }) {
+type PlanKey = "starter" | "growth" | "pro";
+
+function KeyStorMark({ size = 36 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" fill="none" aria-hidden="true">
       <defs>
-        <linearGradient id="ks-metal-a" x1="12" y1="10" x2="54" y2="54" gradientUnits="userSpaceOnUse">
+        <linearGradient id="ks-signup-a" x1="12" y1="10" x2="54" y2="54" gradientUnits="userSpaceOnUse">
           <stop stopColor="#E5E7EB" />
           <stop offset="0.45" stopColor="#B8BEC8" />
           <stop offset="1" stopColor="#7C8492" />
         </linearGradient>
-        <linearGradient id="ks-metal-b" x1="18" y1="14" x2="52" y2="52" gradientUnits="userSpaceOnUse">
+        <linearGradient id="ks-signup-b" x1="18" y1="14" x2="52" y2="52" gradientUnits="userSpaceOnUse">
           <stop stopColor="#AAB2BF" />
           <stop offset="1" stopColor="#626A78" />
         </linearGradient>
@@ -24,14 +26,12 @@ function KeyStorMark({ size = 42 }: { size?: number }) {
 
       <path
         d="M20 14H31V20H26V24H31V31L24 38V50L16 44V14H20Z"
-        fill="url(#ks-metal-a)"
+        fill="url(#ks-signup-a)"
       />
-
       <path
         d="M35 29L50 14H58L43 29L58 50H49L36 32V50H28V14H36V26L35 29Z"
-        fill="url(#ks-metal-b)"
+        fill="url(#ks-signup-b)"
       />
-
       <path
         d="M20 14H31V20H26V24H31V31L24 38V50"
         stroke="rgba(255,255,255,0.28)"
@@ -94,9 +94,21 @@ function EyeIcon({ open }: { open: boolean }) {
   );
 }
 
-export default function LoginPage() {
-  const router = useRouter();
+function nicePlanName(plan: PlanKey) {
+  if (plan === "starter") return "Starter";
+  if (plan === "growth") return "Growth";
+  return "Professional";
+}
 
+export default function SignupClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const plan = (searchParams.get("plan") || "growth") as PlanKey;
+  const founding = searchParams.get("founding") === "true";
+
+  const [name, setName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -112,39 +124,66 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await signIn("credentials", {
+      const signupRes = await fetch("/api/signup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name,
+          organizationName,
+          email,
+          password,
+        }),
+      });
+
+      const signupJson = await signupRes.json();
+
+      if (!signupRes.ok) {
+        throw new Error(signupJson?.error ?? "Unable to create account.");
+      }
+
+      const login = await signIn("credentials", {
         email: email.trim().toLowerCase(),
         password,
         redirect: false,
       });
 
-      if (!res) {
-        setError("Unable to sign in right now. Please try again.");
-        setLoading(false);
-        return;
+      if (!login || login.error) {
+        throw new Error("Account created, but automatic sign-in failed. Please sign in manually.");
       }
 
-      if (res.error) {
-        setError("Invalid email or password.");
-        setLoading(false);
-        return;
+      const checkoutRes = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          plan,
+          founding,
+        }),
+      });
+
+      const checkoutJson = await checkoutRes.json();
+
+      if (!checkoutRes.ok) {
+        throw new Error(checkoutJson?.error ?? "Unable to start checkout.");
       }
 
-      const sessRes = await fetch("/api/auth/session");
-      const sess = await sessRes.json();
-      const role = sess?.user?.role;
+      if (!checkoutJson?.url) {
+        throw new Error("Stripe checkout URL was not returned.");
+      }
 
-      if (role === "TENANT") router.push("/tenant");
-      else router.push("/app");
+      window.location.href = checkoutJson.url;
     } catch (err: any) {
-      setError(err?.message ?? "Login failed.");
+      setError(err?.message ?? "Unable to start trial.");
       setLoading(false);
     }
   }
 
   return (
     <main className="min-h-screen bg-[#0B0E14] text-zinc-100">
-      <div className="relative mx-auto grid min-h-screen max-w-7xl grid-cols-1 lg:grid-cols-[1.15fr_0.85fr]">
+      <div className="relative mx-auto grid min-h-screen max-w-7xl grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
         <div
           className="pointer-events-none absolute inset-0 opacity-90"
           style={{
@@ -152,16 +191,7 @@ export default function LoginPage() {
               "radial-gradient(900px 520px at 18% 12%, rgba(91,110,225,0.18), transparent 60%), radial-gradient(720px 480px at 78% 22%, rgba(91,110,225,0.10), transparent 58%), linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0))",
           }}
         />
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.14]"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.18) 1px, transparent 0)",
-            backgroundSize: "24px 24px",
-          }}
-        />
 
-        {/* LEFT PANEL */}
         <section className="relative overflow-hidden border-b border-[#232838] lg:border-b-0 lg:border-r">
           <div className="relative flex h-full flex-col justify-between p-8 lg:p-12">
             <div>
@@ -172,7 +202,7 @@ export default function LoginPage() {
                 <div>
                   <div className="text-2xl font-semibold tracking-[0.02em]">KeyStor</div>
                   <div className="mt-1 text-sm text-zinc-300">
-                    Property management for independent landlords
+                    Start your owner account
                   </div>
                 </div>
               </div>
@@ -180,70 +210,27 @@ export default function LoginPage() {
               <div className="mt-6 h-px w-32 bg-gradient-to-r from-[#8B93A3] via-[#D0D5DD] to-transparent opacity-70" />
 
               <h1 className="mt-10 max-w-xl text-2xl font-semibold leading-tight tracking-tight text-zinc-100 lg:text-3xl">
-                Manage your rentals with clarity.
+                Create your account and start your trial.
               </h1>
 
               <p className="mt-5 max-w-xl text-base leading-7 text-zinc-300">
-                KeyStor gives self-managing landlords a clean, professional way to
-                organize properties, units, tenants, and leases without enterprise
-                software bloat.
+                You’re signing up for the{" "}
+                <span className="font-medium text-zinc-100">{nicePlanName(plan)}</span> plan.
+                After creating your account, you’ll continue to secure checkout through Stripe.
               </p>
 
               <div className="mt-8 flex flex-wrap gap-2 text-xs">
                 <span className="rounded-full border border-[#2A3566] bg-[#1A2346] px-3 py-1.5 text-zinc-100">
-                  Built for 1–75 units
+                  14-day free trial
                 </span>
+                {founding && (
+                  <span className="rounded-full border border-[#2A3566] bg-[#1A2346] px-3 py-1.5 text-zinc-100">
+                    Founding pricing selected
+                  </span>
+                )}
                 <span className="rounded-full border border-[#232838] bg-[#121726] px-3 py-1.5 text-zinc-200">
-                  Properties & Units
+                  Secure checkout powered by Stripe
                 </span>
-                <span className="rounded-full border border-[#232838] bg-[#121726] px-3 py-1.5 text-zinc-200">
-                  Tenants & Leases
-                </span>
-                <span className="rounded-full border border-[#232838] bg-[#121726] px-3 py-1.5 text-zinc-200">
-                  Owner Dashboard
-                </span>
-              </div>
-
-              <div className="mt-10 grid gap-4 md:grid-cols-2">
-                <div className="rounded-2xl border border-[#232838] bg-[#121726]/80 p-5 backdrop-blur-sm">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                    Simple owner operations
-                  </div>
-                  <div className="mt-2 text-sm leading-6 text-zinc-200">
-                    Keep rental operations organized in one place without relying on
-                    spreadsheets, scattered notes, and payment apps.
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-[#232838] bg-[#121726]/80 p-5 backdrop-blur-sm">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                    Professional by design
-                  </div>
-                  <div className="mt-2 text-sm leading-6 text-zinc-200">
-                    Built to help independent landlords operate with confidence using
-                    a clean workflow for properties, tenants, and leasing.
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-10 rounded-2xl border border-[#232838] bg-[#101523]/85 p-5 backdrop-blur-sm">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                  What you can do in KeyStor
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-xl border border-[#232838] bg-[#141A2A] px-4 py-3 text-sm text-zinc-200">
-                    Track properties and units
-                  </div>
-                  <div className="rounded-xl border border-[#232838] bg-[#141A2A] px-4 py-3 text-sm text-zinc-200">
-                    Organize tenants cleanly
-                  </div>
-                  <div className="rounded-xl border border-[#232838] bg-[#141A2A] px-4 py-3 text-sm text-zinc-200">
-                    Create and manage leases
-                  </div>
-                  <div className="rounded-xl border border-[#232838] bg-[#141A2A] px-4 py-3 text-sm text-zinc-200">
-                    Stay on top of rental operations
-                  </div>
-                </div>
               </div>
             </div>
 
@@ -254,34 +241,50 @@ export default function LoginPage() {
           </div>
         </section>
 
-        {/* RIGHT PANEL */}
         <section className="relative flex items-center justify-center p-6 lg:p-10">
           <div className="w-full max-w-md">
             <div className="rounded-[28px] border border-[#232838] bg-[linear-gradient(180deg,rgba(20,24,33,0.96),rgba(14,17,24,0.96))] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl lg:p-8">
-              <div className="flex items-center gap-3">
-                <div className="rounded-2xl border border-white/8 bg-[#0F1626]/70 p-2 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-                  <KeyStorMark size={28} />
-                </div>
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                    Returning Users
-                  </div>
-                  <div className="mt-1 text-2xl font-semibold tracking-tight">
-                    Sign in to KeyStor
-                  </div>
-                </div>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                New Owner Signup
               </div>
-
-              <p className="mt-4 text-sm leading-6 text-zinc-400">
-                Already have an account? Sign in to access your dashboard and manage your rentals.
+              <div className="mt-2 text-2xl font-semibold tracking-tight">
+                Create your KeyStor account
+              </div>
+              <p className="mt-3 text-sm leading-6 text-zinc-400">
+                Once your account is created, you’ll continue to billing and begin your free trial.
               </p>
 
               <form onSubmit={onSubmit} className="mt-8 space-y-4">
                 <div>
                   <div className="mb-1.5 text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
+                    Your Name
+                  </div>
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="John Owner"
+                    disabled={loading}
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
+                    Organization Name
+                  </div>
+                  <Input
+                    value={organizationName}
+                    onChange={(e) => setOrganizationName(e.target.value)}
+                    placeholder="Oak Street Rentals"
+                    disabled={loading}
+                  />
+                </div>
+
+                <div>
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">
                     Email
                   </div>
                   <Input
+                    type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@company.com"
@@ -312,9 +315,9 @@ export default function LoginPage() {
                       onChange={(e) => setPassword(e.target.value)}
                       onKeyUp={(e) => setCapsLockOn(e.getModifierState("CapsLock"))}
                       onKeyDown={(e) => setCapsLockOn(e.getModifierState("CapsLock"))}
-                      placeholder="Enter your password"
+                      placeholder="At least 8 characters"
                       disabled={loading}
-                      autoComplete="current-password"
+                      autoComplete="new-password"
                     />
                     <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-zinc-500">
                       <EyeIcon open={showPassword} />
@@ -335,30 +338,26 @@ export default function LoginPage() {
                 )}
 
                 <Button variant="primary" type="submit" disabled={loading}>
-                  {loading ? "Signing in…" : "Sign in to KeyStor"}
+                  {loading ? "Creating account…" : "Continue to Billing"}
                 </Button>
 
                 <div className="rounded-2xl border border-[#232838] bg-[#101523] px-4 py-3 text-xs leading-6 text-zinc-500">
-                  Secure access for owners and tenants. Your session is authenticated
-                  through your organization’s KeyStor account.
+                  By continuing, you’ll create your owner account first, then securely complete checkout through Stripe.
                 </div>
               </form>
 
               <div className="mt-6 border-t border-[#232838] pt-6">
-                <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-                  New to KeyStor?
-                </div>
-                <p className="mt-2 text-sm leading-6 text-zinc-400">
-                  Start with a 14-day free trial and choose the plan that fits your portfolio.
-                </p>
-
-                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                  <Link href="/signup" className="flex-1">
-                    <Button variant="primary">Start Free Trial</Button>
+                <div className="text-sm text-zinc-400">
+                  Already have an account?{" "}
+                  <Link href="/login" className="text-zinc-200 underline-offset-4 hover:underline">
+                    Sign in
                   </Link>
+                </div>
 
-                  <Link href="/subscribe" className="flex-1">
-                    <Button variant="secondary">View Plans</Button>
+                <div className="mt-3 text-sm text-zinc-400">
+                  Want to compare plans again?{" "}
+                  <Link href="/subscribe" className="text-zinc-200 underline-offset-4 hover:underline">
+                    View pricing
                   </Link>
                 </div>
               </div>

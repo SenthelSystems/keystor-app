@@ -1,52 +1,96 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Button from "@/components/ui/button";
 import Input from "@/components/ui/input";
+
+type UnitStatus = "VACANT" | "OCCUPIED";
+
+type UnitCreatePayload = {
+  label: string;
+  category: string;
+  status: UnitStatus;
+  baseRentDollars: number;
+};
+
+type UnitCreateModalProps = {
+  open: boolean;
+  onClose: () => void;
+  propertyName: string;
+  onSubmit: (payload: UnitCreatePayload) => Promise<void>;
+};
+
+const INITIAL_FORM: UnitCreatePayload = {
+  label: "",
+  category: "SFR",
+  status: "VACANT",
+  baseRentDollars: 1800,
+};
 
 export default function UnitCreateModal({
   open,
   onClose,
   propertyName,
   onSubmit,
-}: {
-  open: boolean;
-  onClose: () => void;
-  propertyName: string;
-  onSubmit: (payload: {
-    label: string;
-    category: string;
-    status: "VACANT" | "OCCUPIED";
-    baseRentDollars: number;
-  }) => Promise<void>;
-}) {
-  const [label, setLabel] = useState("Unit A1");
-  const [category, setCategory] = useState("SFR");
-  const [status, setStatus] = useState<"VACANT" | "OCCUPIED">("VACANT");
-  const [baseRentDollars, setBaseRentDollars] = useState<number>(1800);
-
+}: UnitCreateModalProps) {
+  const [form, setForm] = useState<UnitCreatePayload>(INITIAL_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!open) return null;
+  useEffect(() => {
+    if (!open) {
+      setForm(INITIAL_FORM);
+      setSaving(false);
+      setError(null);
+    }
+  }, [open]);
 
-  async function submit() {
+  const canSubmit = useMemo(() => {
+    return form.label.trim().length > 0 && form.category.trim().length > 0;
+  }, [form.label, form.category]);
+
+  function updateField<K extends keyof UnitCreatePayload>(
+    field: K,
+    value: UnitCreatePayload[K]
+  ) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function handleSubmit() {
+    if (saving || !canSubmit) return;
+
     setSaving(true);
     setError(null);
 
     try {
-      await onSubmit({ label, category, status, baseRentDollars });
+      await onSubmit({
+        label: form.label.trim(),
+        category: form.category.trim(),
+        status: form.status,
+        baseRentDollars: Number.isFinite(form.baseRentDollars)
+          ? form.baseRentDollars
+          : 0,
+      });
+
       onClose();
-    } catch (e: any) {
-      setError(e?.message ?? "Unknown error");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setSaving(false);
     }
   }
 
+  if (!open) return null;
+
   return (
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/60" onClick={() => !saving && onClose()} />
+      <div
+        className="absolute inset-0 bg-black/60"
+        onClick={() => {
+          if (!saving) onClose();
+        }}
+      />
+
       <div className="absolute inset-x-0 top-6 mx-auto w-[92vw] max-w-2xl">
         <div className="max-h-[90vh] overflow-y-auto rounded-2xl border border-[#232838] bg-[#0F1115] p-6">
           <div className="flex items-start justify-between gap-4">
@@ -67,26 +111,38 @@ export default function UnitCreateModal({
             </Button>
           </div>
 
-          {error && (
+          {error ? (
             <div className="mt-4 rounded-xl border border-red-900/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">
               {error}
             </div>
-          )}
+          ) : null}
 
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <Field label="Label">
-              <Input value={label} onChange={(e) => setLabel(e.target.value)} disabled={saving} />
+              <Input
+                value={form.label}
+                onChange={(e) => updateField("label", e.target.value)}
+                disabled={saving}
+                placeholder="Unit A1"
+              />
             </Field>
 
             <Field label="Category">
-              <Input value={category} onChange={(e) => setCategory(e.target.value)} disabled={saving} />
+              <Input
+                value={form.category}
+                onChange={(e) => updateField("category", e.target.value)}
+                disabled={saving}
+                placeholder="SFR"
+              />
             </Field>
 
             <Field label="Status">
               <select
                 className="w-full rounded-md border border-[#232838] bg-[#141821] px-3 py-2 text-zinc-100 outline-none focus:ring-2 focus:ring-[#5B6EE1]/30 disabled:opacity-60"
-                value={status}
-                onChange={(e) => setStatus(e.target.value as any)}
+                value={form.status}
+                onChange={(e) =>
+                  updateField("status", e.target.value as UnitStatus)
+                }
                 disabled={saving}
               >
                 <option value="VACANT">VACANT</option>
@@ -97,8 +153,12 @@ export default function UnitCreateModal({
             <Field label="Base Rent (monthly, $)">
               <Input
                 type="number"
-                value={String(baseRentDollars)}
-                onChange={(e) => setBaseRentDollars(Number(e.target.value))}
+                min="0"
+                step="1"
+                value={String(form.baseRentDollars)}
+                onChange={(e) =>
+                  updateField("baseRentDollars", Number(e.target.value) || 0)
+                }
                 disabled={saving}
               />
             </Field>
@@ -110,8 +170,8 @@ export default function UnitCreateModal({
             </Button>
             <Button
               variant="primary"
-              onClick={submit}
-              disabled={saving || !label.trim() || !category.trim()}
+              onClick={handleSubmit}
+              disabled={saving || !canSubmit}
             >
               {saving ? "Creating…" : "Create Unit"}
             </Button>
@@ -122,7 +182,13 @@ export default function UnitCreateModal({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
       <div className="text-xs text-zinc-500">{label}</div>

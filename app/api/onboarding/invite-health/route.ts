@@ -10,8 +10,7 @@ export async function GET() {
     const orgId = user.organizationId;
 
     const now = new Date();
-    const soonMs = 2 * 24 * 60 * 60 * 1000; // 2 days
-    const soonDate = new Date(Date.now() + soonMs);
+    const soonDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
 
     const pendingInvites = await prisma.invite.findMany({
       where: {
@@ -20,7 +19,7 @@ export async function GET() {
         status: "PENDING",
         expiresAt: { gt: now },
       },
-      orderBy: { expiresAt: "asc" },
+      orderBy: [{ email: "asc" }, { expiresAt: "desc" }],
       select: {
         id: true,
         email: true,
@@ -28,23 +27,97 @@ export async function GET() {
         token: true,
         expiresAt: true,
       },
-      take: 50,
+      take: 100,
     });
 
-    const pendingCount = pendingInvites.length;
-    const expiringSoonCount = pendingInvites.filter(
-      (i) => new Date(i.expiresAt).getTime() <= soonDate.getTime()
+    const inviteEmails = Array.from(
+      new Set(
+        pendingInvites.map((invite) => invite.email.trim().toLowerCase())
+      )
+    );
+
+    let registeredTenantEmails = new Set<string>();
+
+    if (inviteEmails.length > 0) {
+      const existingTenantUsers = await prisma.user.findMany({
+        where: {
+          organizationId: orgId,
+          role: "TENANT",
+          email: {
+            in: inviteEmails,
+          },
+        },
+        select: {
+          email: true,
+        },
+      });
+
+      registeredTenantEmails = new Set(
+        existingTenantUsers.map((user) => user.email.trim().toLowerCase())
+      );
+    }
+
+    const staleInviteIds = pendingInvites
+      .filter((invite) =>
+        registeredTenantEmails.has(invite.email.trim().toLowerCase())
+      )
+      .map((invite) => invite.id);
+
+    if (staleInviteIds.length > 0) {
+      await prisma.invite.updateMany({
+        where: {
+          id: {
+            in: staleInviteIds,
+          },
+        },
+        data: {
+          status: "INVALIDATED",
+        },
+      });
+    }
+
+    const activePendingInvites = pendingInvites.filter(
+      (invite) => !registeredTenantEmails.has(invite.email.trim().toLowerCase())
+    );
+
+    const dedupedByEmail = new Map<
+      string,
+      {
+        id: string;
+        email: string;
+        name: string | null;
+        token: string;
+        expiresAt: Date;
+      }
+    >();
+
+    for (const invite of activePendingInvites) {
+      const key = invite.email.trim().toLowerCase();
+
+      if (!dedupedByEmail.has(key)) {
+        dedupedByEmail.set(key, invite);
+      }
+    }
+
+    const uniquePendingInvites = Array.from(dedupedByEmail.values()).sort(
+      (a, b) =>
+        new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime()
+    );
+
+    const pendingCount = uniquePendingInvites.length;
+
+    const expiringSoonCount = uniquePendingInvites.filter(
+      (invite) => new Date(invite.expiresAt).getTime() <= soonDate.getTime()
     ).length;
 
-    // IMPORTANT: do not require NEXTAUTH_URL at build time; provide fallback
     const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
-    const topExpiring = pendingInvites.slice(0, 3).map((i) => ({
-      id: i.id,
-      email: i.email,
-      name: i.name,
-      expiresAt: i.expiresAt,
-      link: `${baseUrl}/accept-invite?token=${i.token}`,
+    const topExpiring = uniquePendingInvites.slice(0, 3).map((invite) => ({
+      id: invite.id,
+      email: invite.email,
+      name: invite.name,
+      expiresAt: invite.expiresAt,
+      link: `${baseUrl}/accept-invite?token=${invite.token}`,
     }));
 
     return NextResponse.json({
@@ -54,11 +127,16 @@ export async function GET() {
         topExpiring,
       },
     });
-  } catch (e: any) {
-    const status = e?.code === "FORBIDDEN" ? 403 : 401;
-    return NextResponse.json(
-      { error: e?.message ?? "Failed to load invite health" },
-      { status }
-    );
+  } catch (e: unknown) {
+    const error =
+      e instanceof Error ? e : new Error("Failed to load invite health");
+
+    const status =
+      typeof (e as { code?: string })?.code === "string" &&
+      (e as { code?: string }).code === "FORBIDDEN"
+        ? 403
+        : 401;
+
+    return NextResponse.json({ error: error.message }, { status });
   }
 }

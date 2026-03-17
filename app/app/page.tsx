@@ -68,16 +68,18 @@ function chip(text: string) {
   );
 }
 
-/** Aging badge helpers (Smart Updates Session 2) */
 function ageInDays(iso: string) {
   const ms = Date.now() - new Date(iso).getTime();
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
+
 function ageBadgeClass(days: number) {
-  if (days >= 14)
+  if (days >= 14) {
     return "inline-flex rounded-full border border-red-900/40 bg-red-950/30 px-2 py-0.5 text-[10px] text-red-200";
-  if (days >= 7)
+  }
+  if (days >= 7) {
     return "inline-flex rounded-full border border-[#2A3566] bg-[#1A2346] px-2 py-0.5 text-[10px] text-zinc-100";
+  }
   return null;
 }
 
@@ -90,18 +92,17 @@ function StepRow({
   done: boolean;
   label: string;
   hint: string;
-  href: string;
+  href?: string;
 }) {
-  return (
-    <Link
-      href={href}
-      className={[
-        "flex items-start justify-between gap-4 rounded-xl border px-4 py-3 transition",
-        done
-          ? "border-[#23382F] bg-[#101A14]"
-          : "border-[#232838] bg-[#161C2F] hover:bg-[#1C2340]",
-      ].join(" ")}
-    >
+  const className = [
+    "flex items-start justify-between gap-4 rounded-xl border px-4 py-3 transition",
+    done
+      ? "border-[#23382F] bg-[#101A14]"
+      : "border-[#232838] bg-[#161C2F] hover:bg-[#1C2340]",
+  ].join(" ");
+
+  const content = (
+    <>
       <div>
         <div className="flex items-center gap-2">
           <span
@@ -119,8 +120,33 @@ function StepRow({
         <div className="mt-1 text-xs text-zinc-500">{hint}</div>
       </div>
 
-      <div className="text-xs text-zinc-400 mt-0.5">{done ? "Done" : "Go"}</div>
+      <div className="mt-0.5 shrink-0 text-xs text-zinc-400">{done ? "Done" : "Go"}</div>
+    </>
+  );
+
+  if (!href) {
+    return <div className={className}>{content}</div>;
+  }
+
+  return (
+    <Link href={href} className={className}>
+      {content}
     </Link>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-xl border border-[#232838] bg-[#161C2F] px-4 py-3">
+      <div className="text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-zinc-100">{value}</div>
+    </div>
   );
 }
 
@@ -132,7 +158,6 @@ export default function AppHome() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Invite panel state
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
@@ -141,7 +166,6 @@ export default function AppHome() {
   const [inviteExpiresAt, setInviteExpiresAt] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Remember last generated invite so Regenerate can work without retyping
   const [lastInvitedEmail, setLastInvitedEmail] = useState<string | null>(null);
   const [lastInvitedName, setLastInvitedName] = useState<string | null>(null);
 
@@ -156,19 +180,25 @@ export default function AppHome() {
         fetch("/api/onboarding/invite-health"),
       ]);
 
-      const oJson = await oRes.json();
-      const sJson = await sRes.json();
-      const hJson = await hRes.json();
+      const [oJson, sJson, hJson] = await Promise.all([
+        oRes.json(),
+        sRes.json(),
+        hRes.json(),
+      ]);
 
-      if (!oRes.ok) throw new Error(oJson?.error ?? "Failed to load overview");
-      if (!sRes.ok) throw new Error(sJson?.error ?? "Failed to load onboarding status");
-      if (!hRes.ok) throw new Error(hJson?.error ?? "Failed to load invite health");
+      if (!oRes.ok) throw new Error(oJson?.error ?? "Failed to load dashboard overview.");
+      if (!sRes.ok) {
+        throw new Error(sJson?.error ?? "Failed to load onboarding status.");
+      }
+      if (!hRes.ok) {
+        throw new Error(hJson?.error ?? "Failed to load invite activity.");
+      }
 
       setOverview(oJson);
       setOnboarding(sJson.data);
       setInviteHealth(hJson.data);
-    } catch (e: any) {
-      setError(e?.message ?? "Unknown error");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong while loading the dashboard.");
     } finally {
       setLoading(false);
     }
@@ -188,7 +218,40 @@ export default function AppHome() {
     );
   }, [onboarding]);
 
+  const canInviteTenant = useMemo(() => {
+    if (!onboarding) return false;
+    return onboarding.hasProperty && onboarding.hasUnit;
+  }, [onboarding]);
+
+  const inviteSectionLabel = onboarding?.hasTenant ? "Tenant Invites" : "First Tenant";
+  const inviteSectionTitle = onboarding?.hasTenant
+    ? "Invite a Tenant"
+    : "Invite Your First Tenant";
+
+  const inviteButtonLabel = onboarding?.hasTenant
+    ? "Generate Invite Link"
+    : "Send First Invite";
+
+  const inviteSectionDescription = useMemo(() => {
+    if (!onboarding) return "Generate a secure invite link to onboard a tenant.";
+
+    if (!canInviteTenant) {
+      return "Create at least one property and one unit before inviting a tenant.";
+    }
+
+    if (!onboarding.hasTenant) {
+      return "Send your first secure invite link to onboard a tenant.";
+    }
+
+    return "Generate and manage secure invite links for tenants.";
+  }, [onboarding, canInviteTenant]);
+
   async function sendInvite(payload?: { email: string; name: string | null }) {
+    if (!canInviteTenant) {
+      setInviteError("Create a property and unit before inviting a tenant.");
+      return;
+    }
+
     setInviteLoading(true);
     setInviteError(null);
     setCopied(false);
@@ -197,7 +260,9 @@ export default function AppHome() {
       const emailToUse = (payload?.email ?? inviteEmail).trim();
       const nameToUse = payload?.name ?? (inviteName ? inviteName.trim() : null);
 
-      if (!emailToUse) throw new Error("Tenant email is required.");
+      if (!emailToUse) {
+        throw new Error("Tenant email is required.");
+      }
 
       const res = await fetch("/api/onboarding/invite-tenant", {
         method: "POST",
@@ -209,11 +274,13 @@ export default function AppHome() {
       });
 
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? "Failed to invite tenant");
+
+      if (!res.ok) {
+        throw new Error(json?.error ?? "Failed to create invite.");
+      }
 
       setInviteLink(json.data.link);
       setInviteExpiresAt(json.data.expiresAt);
-
       setLastInvitedEmail(emailToUse);
       setLastInvitedName(nameToUse);
 
@@ -221,8 +288,8 @@ export default function AppHome() {
       setInviteName("");
 
       await loadAll();
-    } catch (e: any) {
-      setInviteError(e?.message ?? "Unknown error");
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Unable to create invite.");
     } finally {
       setInviteLoading(false);
     }
@@ -231,12 +298,13 @@ export default function AppHome() {
   async function copyLink(link?: string) {
     const toCopy = link ?? inviteLink;
     if (!toCopy) return;
+
     try {
       await navigator.clipboard.writeText(toCopy);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      window.setTimeout(() => setCopied(false), 1200);
     } catch {
-      // ignore
+      // ignore clipboard errors
     }
   }
 
@@ -246,7 +314,7 @@ export default function AppHome() {
       nameOverride ?? lastInvitedName ?? (inviteName ? inviteName.trim() : null);
 
     if (!emailToUse) {
-      setInviteError("Enter an email (or generate one invite first) to regenerate.");
+      setInviteError("Enter an email first, or generate an invite before using regenerate.");
       return;
     }
 
@@ -254,157 +322,168 @@ export default function AppHome() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Mission Control</h1>
           <p className="mt-1 text-sm text-zinc-300">
-            Today’s overview: what needs attention, what’s stable, and what changed.
+            Your operational snapshot for leasing, tenants, and service activity.
           </p>
         </div>
 
         <Button variant="secondary" onClick={loadAll} disabled={loading}>
-          {loading ? "Loading…" : "Refresh"}
+          {loading ? "Refreshing…" : "Refresh"}
         </Button>
       </div>
 
-      {error && (
+      {error ? (
         <div className="rounded-xl border border-red-900/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">
           {error}
         </div>
-      )}
+      ) : null}
 
-      {/* Onboarding + Invite */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        {onboarding && !onboardingComplete && (
-          <section className="rounded-2xl border border-[#232838] bg-[#121726] p-4 lg:col-span-2">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-zinc-500">
-                  Get Started
-                </div>
-                <div className="mt-1 text-sm text-zinc-200">
-                  Your first steps: create assets, invite a tenant, and start your first lease.
-                </div>
-              </div>
-
-              <div className="text-xs text-zinc-500">
-                {`${onboarding.counts.propertiesCount} properties • ${onboarding.counts.unitsCount} units • ${onboarding.counts.tenantsCount} tenants • ${onboarding.counts.activeLeaseCount} active leases`}
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-2 md:grid-cols-2">
-              <StepRow
-                done={onboarding.hasProperty}
-                label="Create your first Property"
-                hint="Define a rentable collection (e.g., Nature Coast Connex Boxes)."
-                href="/app/lease"
-              />
-              <StepRow
-                done={onboarding.hasUnit}
-                label="Add your first Unit"
-                hint="Create rentable items (20ft/40ft boxes, pads, bays, etc.)."
-                href="/app/lease"
-              />
-              <StepRow
-                done={onboarding.hasTenant}
-                label="Invite your first Tenant"
-                hint="Send a secure invite link to your tenant."
-                href="/app"
-              />
-              <StepRow
-                done={onboarding.hasActiveLease}
-                label="Create your first Lease"
-                hint="Assign a tenant to a vacant unit with terms."
-                href="/app/leasing"
-              />
-            </div>
-          </section>
-        )}
-
-        {/* Invite Tenant panel */}
-        <section
-          className={[
-            "rounded-2xl border border-[#232838] bg-[#121726] p-4",
-            onboarding && !onboardingComplete ? "" : "lg:col-span-3",
-          ].join(" ")}
-        >
-          <div className="flex items-start justify-between gap-4">
+      {onboarding && !onboardingComplete ? (
+        <section className="rounded-2xl border border-[#232838] bg-[#121726] p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="text-[11px] uppercase tracking-wider text-zinc-500">
-                Invite a Tenant
+                Get Started
               </div>
               <div className="mt-1 text-sm text-zinc-200">
-                Generate an invite link to onboard a tenant.
+                Complete the core setup steps to begin leasing and tenant operations.
               </div>
             </div>
 
-            {inviteHealth && (
-              <div className="text-xs text-zinc-500 text-right">
-                Pending: <span className="text-zinc-200">{inviteHealth.pendingCount}</span>
-                <br />
-                Expiring ≤2d:{" "}
-                <span className="text-zinc-200">{inviteHealth.expiringSoonCount}</span>
-              </div>
-            )}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[520px]">
+              <SummaryStat label="Properties" value={onboarding.counts.propertiesCount} />
+              <SummaryStat label="Units" value={onboarding.counts.unitsCount} />
+              <SummaryStat label="Tenants" value={onboarding.counts.tenantsCount} />
+              <SummaryStat label="Active Leases" value={onboarding.counts.activeLeaseCount} />
+            </div>
           </div>
 
-          {inviteError && (
-            <div className="mt-3 rounded-xl border border-red-900/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">
-              {inviteError}
-            </div>
-          )}
+          <div className="mt-4 grid gap-2 md:grid-cols-2">
+            <StepRow
+              done={onboarding.hasProperty}
+              label="Create Your First Property"
+              hint="Set up a property, site, yard, building, or other rentable location."
+              href="/app/lease"
+            />
+            <StepRow
+              done={onboarding.hasUnit}
+              label="Add Your First Unit"
+              hint="Create the individual rentable space, home, bay, box, pad, or slip."
+              href="/app/lease"
+            />
+            <StepRow
+              done={onboarding.hasTenant}
+              label="Invite Your First Tenant"
+              hint="Use the invite section below to send a secure tenant onboarding link."
+            />
+            <StepRow
+              done={onboarding.hasActiveLease}
+              label="Create Your First Lease"
+              hint="Assign a tenant to a vacant unit and set the lease terms."
+              href="/app/leasing"
+            />
+          </div>
+        </section>
+      ) : null}
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div>
-              <div className="text-xs text-zinc-500">Tenant Email</div>
-              <div className="mt-1">
-                <Input
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="tenant@email.com"
+      <section
+        className={[
+          "rounded-2xl border border-[#232838] bg-[#121726] p-5",
+          !onboarding?.hasTenant ? "ring-1 ring-[#2A3566]" : "",
+        ].join(" ")}
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500">
+              {inviteSectionLabel}
+            </div>
+            <div className="mt-1 text-lg font-medium text-zinc-100">{inviteSectionTitle}</div>
+            <div className="mt-1 text-sm text-zinc-400">{inviteSectionDescription}</div>
+          </div>
+
+          {inviteHealth ? (
+            <div className="grid grid-cols-2 gap-3 lg:min-w-[240px]">
+              <SummaryStat label="Pending" value={inviteHealth.pendingCount} />
+              <SummaryStat label="Expiring ≤2d" value={inviteHealth.expiringSoonCount} />
+            </div>
+          ) : null}
+        </div>
+
+        {inviteError ? (
+          <div className="mt-4 rounded-xl border border-red-900/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">
+            {inviteError}
+          </div>
+        ) : null}
+
+        {!canInviteTenant ? (
+          <div className="mt-4 rounded-xl border border-[#232838] bg-[#161C2F] p-4">
+            <div className="text-sm text-zinc-200">
+              Before you can invite a tenant, create at least one property and one unit.
+            </div>
+            <div className="mt-3">
+              <Link href="/app/lease">
+                <Button variant="secondary">Go to Property &amp; Unit Setup</Button>
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="mt-5 grid gap-4 lg:grid-cols-3">
+              <div className="lg:col-span-1">
+                <div className="text-xs text-zinc-500">Tenant Email</div>
+                <div className="mt-1">
+                  <Input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="tenant@email.com"
+                    disabled={inviteLoading}
+                  />
+                </div>
+              </div>
+
+              <div className="lg:col-span-1">
+                <div className="text-xs text-zinc-500">Tenant Name (Optional)</div>
+                <div className="mt-1">
+                  <Input
+                    value={inviteName}
+                    onChange={(e) => setInviteName(e.target.value)}
+                    placeholder="Jane Doe"
+                    disabled={inviteLoading}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-end gap-2 lg:col-span-1">
+                <Button
+                  variant="primary"
+                  onClick={() => sendInvite()}
+                  disabled={inviteLoading || inviteEmail.trim().length < 5}
+                >
+                  {inviteLoading ? "Creating Link…" : inviteButtonLabel}
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => regenerateLink()}
                   disabled={inviteLoading}
-                />
+                  title="Generate a fresh invite for the most recent tenant email"
+                >
+                  Regenerate
+                </Button>
               </div>
             </div>
 
-            <div>
-              <div className="text-xs text-zinc-500">Tenant Name (optional)</div>
-              <div className="mt-1">
-                <Input
-                  value={inviteName}
-                  onChange={(e) => setInviteName(e.target.value)}
-                  placeholder="Jane Doe"
-                  disabled={inviteLoading}
-                />
-              </div>
-            </div>
+            {inviteLink ? (
+              <div className="mt-4 rounded-xl border border-[#232838] bg-[#161C2F] p-4">
+                <div className="text-xs text-zinc-500">Latest Invite Link</div>
+                <div className="mt-2 break-all text-sm text-zinc-200">{inviteLink}</div>
 
-            <div className="md:col-span-2 flex gap-2">
-              <Button
-                variant="primary"
-                onClick={() => sendInvite()}
-                disabled={inviteLoading || inviteEmail.trim().length < 5}
-              >
-                {inviteLoading ? "Creating link…" : "Generate Invite Link"}
-              </Button>
-
-              <Button
-                variant="secondary"
-                onClick={() => regenerateLink()}
-                disabled={inviteLoading}
-                title="Regenerate the most recently created invite link"
-              >
-                Regenerate
-              </Button>
-            </div>
-
-            {inviteLink && (
-              <div className="md:col-span-2 rounded-xl border border-[#232838] bg-[#161C2F] p-3">
-                <div className="text-xs text-zinc-500">Invite Link</div>
-                <div className="mt-1 text-xs text-zinc-200 break-all">{inviteLink}</div>
-
-                <div className="mt-2 flex items-center justify-between gap-2">
+                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-xs text-zinc-500">
                     Expires{" "}
                     {inviteExpiresAt ? new Date(inviteExpiresAt).toLocaleDateString() : "—"}
@@ -413,71 +492,72 @@ export default function AppHome() {
                   <div className="flex gap-2">
                     <Button
                       variant="secondary"
-                      onClick={() =>
-                        window.open(inviteLink, "_blank", "noopener,noreferrer")
-                      }
+                      onClick={() => window.open(inviteLink, "_blank", "noopener,noreferrer")}
                     >
                       Open
                     </Button>
-
                     <Button variant="secondary" onClick={() => copyLink()}>
                       {copied ? "Copied!" : "Copy"}
                     </Button>
                   </div>
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {inviteHealth && inviteHealth.topExpiring.length > 0 && (
-              <div className="md:col-span-2 mt-2 rounded-xl border border-[#232838] bg-[#161C2F] p-3">
-                <div className="text-xs text-zinc-500">Invite Health (Top Expiring)</div>
-                <div className="mt-2 space-y-2">
-                  {inviteHealth.topExpiring.map((i) => (
+            {inviteHealth && inviteHealth.topExpiring.length > 0 ? (
+              <div className="mt-4 rounded-xl border border-[#232838] bg-[#161C2F] p-4">
+                <div className="text-xs text-zinc-500">Top Expiring Invites</div>
+
+                <div className="mt-3 space-y-3">
+                  {inviteHealth.topExpiring.map((invite) => (
                     <div
-                      key={i.id}
-                      className="flex items-start justify-between gap-3 rounded-lg border border-[#232838] bg-[#121726] px-3 py-2"
+                      key={invite.id}
+                      className="rounded-xl border border-[#232838] bg-[#121726] p-3"
                     >
-                      <div className="min-w-0">
-                        <div className="text-sm text-zinc-200 truncate">
-                          {i.name ? `${i.name} — ${i.email}` : i.email}
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm text-zinc-200">
+                            {invite.name ? `${invite.name} — ${invite.email}` : invite.email}
+                          </div>
+                          <div className="mt-1 text-xs text-zinc-500">
+                            Expires {new Date(invite.expiresAt).toLocaleDateString()}
+                          </div>
                         </div>
-                        <div className="text-xs text-zinc-500">
-                          Expires {new Date(i.expiresAt).toLocaleDateString()}
-                        </div>
-                      </div>
 
-                      <div className="flex gap-2">
-                        <Button
-                          variant="secondary"
-                          onClick={() => window.open(i.link, "_blank", "noopener,noreferrer")}
-                        >
-                          Open
-                        </Button>
-                        <Button variant="secondary" onClick={() => copyLink(i.link)}>
-                          Copy
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={() => regenerateLink(i.email, i.name)}
-                          title="Regenerate a fresh invite for this tenant"
-                        >
-                          Regen
-                        </Button>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          <Button
+                            variant="secondary"
+                            onClick={() =>
+                              window.open(invite.link, "_blank", "noopener,noreferrer")
+                            }
+                          >
+                            Open
+                          </Button>
+                          <Button variant="secondary" onClick={() => copyLink(invite.link)}>
+                            Copy
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => regenerateLink(invite.email, invite.name)}
+                            title="Generate a fresh invite for this tenant"
+                          >
+                            Regenerate
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-            )}
+            ) : null}
 
-            <div className="md:col-span-2 text-xs text-zinc-500">
-              v1 note: Cross-owner tenant reuse will be supported in v2.
+            <div className="mt-4 text-xs text-zinc-500">
+              Invite links let tenants create access securely before a lease becomes active.
             </div>
-          </div>
-        </section>
-      </div>
+          </>
+        )}
+      </section>
 
-      {/* Attention Required */}
       <section className="rounded-2xl border border-[#232838] bg-[#121726] p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -485,11 +565,11 @@ export default function AppHome() {
               Attention Required
             </div>
 
-            {overview?.attention.repeatTenantFlag && (
+            {overview?.attention.repeatTenantFlag ? (
               <div className="mt-1 text-xs text-zinc-500">
-                Multiple requests from the same tenant this week.
+                Multiple requests were submitted by the same tenant this week.
               </div>
-            )}
+            ) : null}
 
             <div className="mt-1 text-sm text-zinc-200">
               {loading
@@ -520,7 +600,7 @@ export default function AppHome() {
             <div className="px-3 py-4 text-sm text-zinc-400">Loading…</div>
           ) : (overview?.attention.top?.length ?? 0) === 0 ? (
             <div className="px-3 py-4 text-sm text-zinc-300">
-              No active maintenance items. System is stable.
+              No active maintenance items right now.
             </div>
           ) : (
             <div className="divide-y divide-[#232838]">
@@ -537,17 +617,16 @@ export default function AppHome() {
                     className={[
                       "grid grid-cols-12 items-center px-3 py-3 text-sm transition",
                       idx % 2 === 0 ? "bg-transparent" : "bg-[#141A2E]",
-                      "hover:bg-[#1C2340]",
-                      "cursor-pointer",
+                      "cursor-pointer hover:bg-[#1C2340]",
                     ].join(" ")}
                     title="Open in Service"
                   >
-                    <div className="col-span-6 text-zinc-100 truncate">{r.title}</div>
+                    <div className="col-span-6 truncate text-zinc-100">{r.title}</div>
                     <div className="col-span-2">{chip(String(r.priority ?? "—"))}</div>
                     <div className="col-span-2">{chip(String(r.status ?? "—"))}</div>
                     <div className="col-span-2 flex items-center gap-2 text-xs text-zinc-300">
                       {new Date(r.createdAt).toLocaleDateString()}
-                      {showAge && <span className={cls!}>{days}d</span>}
+                      {showAge ? <span className={cls}>{days}d</span> : null}
                     </div>
                   </Link>
                 );
