@@ -28,10 +28,11 @@ function buildCsp() {
 export const config = {
   matcher: [
     /*
-      Apply to all routes except Next.js internals/assets.
-      Adjust if you already have a matcher you rely on.
+      Apply to all routes except:
+      - Next.js internals/assets
+      - Stripe webhook endpoint
     */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/stripe/webhook).*)",
   ],
 };
 
