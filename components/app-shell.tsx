@@ -135,7 +135,7 @@ export default function AppShell({
       </header>
 
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[270px_1fr]">
-        <aside className="h-fit rounded-3xl border border-[#232838] bg-[#121726] p-3 shadow-[0_16px_50px_rgba(0,0,0,0.22)]">
+        <aside className="flex min-h-[calc(100vh-170px)] flex-col rounded-3xl border border-[#232838] bg-[#121726] p-3 shadow-[0_16px_50px_rgba(0,0,0,0.22)]">
           <div className="px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
             Workspace
           </div>
@@ -155,6 +155,15 @@ export default function AppShell({
             <div className="mt-2 text-xs leading-6 text-zinc-400">
               Manage properties, tenants, leases, and operations in one place.
             </div>
+          </div>
+
+          <div className="mt-auto border-t border-[#232838] pt-4">
+            <div className="px-3 pb-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+              Account
+            </div>
+            <nav className="space-y-1">
+              <NavLink href="/app/settings" label="Settings" />
+            </nav>
           </div>
         </aside>
 

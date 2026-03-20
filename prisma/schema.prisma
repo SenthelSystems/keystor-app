@@ -7,19 +7,43 @@ datasource db {
 }
 
 model Organization {
-  id                  String               @id @default(cuid())
-  name                String
-  slug                String               @unique
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  invites             Invite[]
-  leases              Lease[]
-  maintenanceRequests MaintenanceRequest[]
-  properties          Property[]
-  serviceAttachments  ServiceAttachment[]
-  supportTickets      SupportTicket[]
-  units               Unit[]
-  users               User[]
+  id                             String               @id @default(cuid())
+  name                           String
+  slug                           String               @unique
+  createdAt                      DateTime             @default(now())
+  updatedAt                      DateTime             @updatedAt
+  stripeCustomerId               String?              @unique
+  stripePriceId                  String?
+  stripeSubscriptionId           String?              @unique
+  subscriptionCancelAtPeriodEnd  Boolean              @default(false)
+  subscriptionCanceledAt         DateTime?
+  subscriptionCurrentPeriodEnd   DateTime?
+  subscriptionCurrentPeriodStart DateTime?
+  subscriptionStatus             BillingStatus?
+  billingEvents                  BillingEvent[]
+  invites                        Invite[]
+  leases                         Lease[]
+  maintenanceRequests            MaintenanceRequest[]
+  properties                     Property[]
+  serviceAttachments             ServiceAttachment[]
+  supportTickets                 SupportTicket[]
+  units                          Unit[]
+  users                          User[]
+}
+
+model BillingEvent {
+  id             String       @id @default(cuid())
+  organizationId String
+  stripeEventId  String       @unique
+  eventType      String
+  payload        Json?
+  processedAt    DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+  @@index([eventType])
+  @@index([processedAt])
 }
 
 model User {
@@ -260,4 +284,14 @@ enum AuditAction {
 enum AttachmentKind {
   IMAGE
   VIDEO
+}
+
+enum BillingStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
 }
