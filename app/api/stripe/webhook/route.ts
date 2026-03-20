@@ -125,9 +125,9 @@ export async function POST(req: Request) {
     );
   }
 
-    const body = await req.text();
+  const body = await req.text();
 
-  console.log("Stripe webhook debug", {
+  console.error("Stripe webhook debug", {
     hasSignature: Boolean(signature),
     secretPrefix: webhookSecret?.slice(0, 12) ?? null,
     bodyLength: body.length,
