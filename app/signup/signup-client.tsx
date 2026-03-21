@@ -155,7 +155,7 @@ export default function SignupClient() {
         );
       }
 
-      const nextUrl = `/app?startCheckout=true&plan=${encodeURIComponent(
+      const nextUrl = `/app/subscribe?startCheckout=true&plan=${encodeURIComponent(
         plan
       )}&founding=${founding ? "true" : "false"}`;
 
