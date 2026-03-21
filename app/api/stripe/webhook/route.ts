@@ -64,6 +64,39 @@ async function recordBillingEvent(params: {
   });
 }
 
+async function findOrganizationForSubscription(subscription: Stripe.Subscription) {
+  const stripeCustomerId =
+    typeof subscription.customer === "string"
+      ? subscription.customer
+      : subscription.customer.id;
+
+  const metadataOrganizationId = subscription.metadata?.organizationId;
+
+  if (metadataOrganizationId) {
+    const byMetadata = await prisma.organization.findUnique({
+      where: { id: metadataOrganizationId },
+      select: { id: true },
+    });
+
+    if (byMetadata) {
+      return byMetadata;
+    }
+  }
+
+  const byCustomer = await prisma.organization.findFirst({
+    where: { stripeCustomerId },
+    select: { id: true },
+  });
+
+  if (byCustomer) {
+    return byCustomer;
+  }
+
+  throw new Error(
+    `No organization found for subscription ${subscription.id} (customer ${stripeCustomerId})`
+  );
+}
+
 async function syncOrganizationFromSubscription(subscription: Stripe.Subscription) {
   const stripeCustomerId =
     typeof subscription.customer === "string"
@@ -73,14 +106,7 @@ async function syncOrganizationFromSubscription(subscription: Stripe.Subscriptio
   const stripeSubscriptionId = subscription.id;
   const stripePriceId = subscription.items.data[0]?.price?.id ?? null;
 
-  const organization = await prisma.organization.findFirst({
-    where: { stripeCustomerId },
-    select: { id: true },
-  });
-
-  if (!organization) {
-    throw new Error(`No organization found for Stripe customer ${stripeCustomerId}`);
-  }
+  const organization = await findOrganizationForSubscription(subscription);
 
   await prisma.organization.update({
     where: { id: organization.id },
@@ -90,7 +116,6 @@ async function syncOrganizationFromSubscription(subscription: Stripe.Subscriptio
       stripePriceId,
       subscriptionStatus: mapStripeStatus(subscription.status),
       subscriptionCurrentPeriodStart: toDate(
-        // Stripe typing can lag here depending on sdk version
         (subscription as Stripe.Subscription & {
           current_period_start?: number;
         }).current_period_start ?? null
@@ -138,7 +163,7 @@ export async function POST(req: Request) {
 
   try {
     event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-    } catch (err: unknown) {
+  } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Webhook signature verification failed.";
 
@@ -227,9 +252,9 @@ export async function POST(req: Request) {
       case "customer.subscription.deleted": {
         const subscription = event.data.object as Stripe.Subscription;
 
-        const organizationId =
-          (subscription.metadata?.organizationId as string | undefined) ??
-          (await syncOrganizationFromSubscription(subscription));
+        const organizationId = await syncOrganizationFromSubscription(
+          subscription
+        );
 
         await recordBillingEvent({
           organizationId,
@@ -256,58 +281,26 @@ export async function POST(req: Request) {
       case "invoice.payment_failed": {
         const invoice = event.data.object as Stripe.Invoice;
 
-        const stripeCustomerId =
-          typeof invoice.customer === "string"
-            ? invoice.customer
-            : invoice.customer?.id ?? null;
+        const invoiceWithSubscription = invoice as Stripe.Invoice & {
+          subscription?: string | Stripe.Subscription | null;
+        };
 
-        if (!stripeCustomerId) {
+        const subscriptionId =
+          typeof invoiceWithSubscription.subscription === "string"
+            ? invoiceWithSubscription.subscription
+            : invoiceWithSubscription.subscription?.id ?? null;
+
+        if (!subscriptionId) {
           break;
         }
 
-        const organization = await prisma.organization.findFirst({
-          where: { stripeCustomerId },
-          select: {
-            id: true,
-            stripeSubscriptionId: true,
-          },
-        });
-
-        if (!organization) {
-          throw new Error(
-            `No organization found for Stripe customer ${stripeCustomerId}`
-          );
-        }
-
-        if (organization.stripeSubscriptionId) {
-          const subscription = await stripe.subscriptions.retrieve(
-            organization.stripeSubscriptionId
-          );
-
-          await prisma.organization.update({
-            where: { id: organization.id },
-            data: {
-              stripePriceId: subscription.items.data[0]?.price?.id ?? null,
-              subscriptionStatus: mapStripeStatus(subscription.status),
-              subscriptionCurrentPeriodStart: toDate(
-                (subscription as Stripe.Subscription & {
-                  current_period_start?: number;
-                }).current_period_start ?? null
-              ),
-              subscriptionCurrentPeriodEnd: toDate(
-                (subscription as Stripe.Subscription & {
-                  current_period_end?: number;
-                }).current_period_end ?? null
-              ),
-              subscriptionCancelAtPeriodEnd:
-                subscription.cancel_at_period_end ?? false,
-              subscriptionCanceledAt: toDate(subscription.canceled_at),
-            },
-          });
-        }
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        const organizationId = await syncOrganizationFromSubscription(
+          subscription
+        );
 
         await recordBillingEvent({
-          organizationId: organization.id,
+          organizationId,
           stripeEventId: event.id,
           eventType: event.type,
           payload: event,
@@ -315,8 +308,12 @@ export async function POST(req: Request) {
 
         console.log(`Stripe ${event.type} processed`, {
           eventId: event.id,
-          organizationId: organization.id,
-          stripeCustomerId,
+          organizationId,
+          subscriptionId,
+          customerId:
+            typeof subscription.customer === "string"
+              ? subscription.customer
+              : subscription.customer.id,
         });
 
         break;
