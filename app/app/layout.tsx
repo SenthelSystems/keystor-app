@@ -43,7 +43,6 @@ export default async function AppLayout({
   const headerStore = await headers();
   const pathname = headerStore.get("x-pathname") ?? "";
 
-  // TENANT users go to tenant experience
   if (user.role === "TENANT") {
     redirect("/tenant");
   }
@@ -70,14 +69,19 @@ export default async function AppLayout({
 
   const isSubscribeRoute = pathname === "/app/subscribe";
 
-  // If owner is not in an allowed billing state, only allow the subscribe page.
+  // Not allowed? Force them to the billing gate.
   if (!allowed && !isSubscribeRoute) {
     redirect("/app/subscribe");
   }
 
-  // If owner is already allowed, keep them out of subscribe page.
+  // Already allowed? Keep them out of the subscribe gate.
   if (allowed && isSubscribeRoute) {
     redirect("/app");
+  }
+
+  // Critical: do NOT render the real app shell for unpaid/unactivated users.
+  if (!allowed && isSubscribeRoute) {
+    return <>{children}</>;
   }
 
   return <AppShell user={{ email: user.email, role: user.role }}>{children}</AppShell>;
