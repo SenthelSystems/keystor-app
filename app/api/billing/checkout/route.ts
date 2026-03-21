@@ -54,7 +54,11 @@ export async function POST(req: Request) {
 
     if (!priceId) {
       return NextResponse.json(
-        { error: `Missing Stripe price id for plan "${plan}" (founding=${Boolean(founding)}).` },
+        {
+          error: `Missing Stripe price id for plan "${plan}" (founding=${Boolean(
+            founding
+          )}).`,
+        },
         { status: 400 }
       );
     }
@@ -62,6 +66,11 @@ export async function POST(req: Request) {
     if (!process.env.NEXTAUTH_URL) {
       return NextResponse.json({ error: "Missing NEXTAUTH_URL." }, { status: 500 });
     }
+
+    const successUrl = `${process.env.NEXTAUTH_URL}/app?trial=started`;
+    const cancelUrl = `${process.env.NEXTAUTH_URL}/app/subscribe?cancelled=true&plan=${encodeURIComponent(
+      plan
+    )}&founding=${founding ? "true" : "false"}`;
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -87,8 +96,8 @@ export async function POST(req: Request) {
         plan,
         founding: String(Boolean(founding)),
       },
-      success_url: `${process.env.NEXTAUTH_URL}/app?trial=started`,
-      cancel_url: `${process.env.NEXTAUTH_URL}/app?trial=cancelled`,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
     });
 
     return NextResponse.json({ url: checkoutSession.url });
