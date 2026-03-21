@@ -37,7 +37,14 @@ export const config = {
 };
 
 export default function middleware(req: NextRequest) {
-  const res = NextResponse.next();
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-pathname", req.nextUrl.pathname);
+
+  const res = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 
   // Core security headers
   res.headers.set("X-Content-Type-Options", "nosniff");
